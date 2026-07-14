@@ -1,0 +1,10 @@
+{
+  "id": "native-property-operator",
+  "name": "Native Property Operator",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Safely preview and apply native frontmatter property operations across Markdown notes.",
+  "author": "JQML",
+  "authorUrl": "https://github.com/jqml",
+  "isDesktopOnly": false
+}

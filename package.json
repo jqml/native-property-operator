@@ -1,0 +1,25 @@
+{
+  "name": "native-property-operator",
+  "version": "0.1.0",
+  "description": "Safely preview and apply native frontmatter property operations across Markdown notes.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "frontmatter",
+    "properties"
+  ],
+  "author": "JQML",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.5.12",
+    "typescript": "^5.4.2"
+  }
+}
