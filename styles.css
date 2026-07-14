@@ -1,0 +1,419 @@
+
+/* Extracted static layout classes for Obsidian community lint compatibility. */
+.native-property-operator-style-001 {
+  display: flex;
+}
+
+.native-property-operator-style-002 {
+  align-items: center;
+}
+
+.native-property-operator-style-003 {
+  gap: 8px;
+}
+
+.native-property-operator-style-004 {
+  margin-bottom: 10px;
+}
+
+.native-property-operator-style-005 {
+  display: flex;
+}
+
+.native-property-operator-style-006 {
+  flex-wrap: wrap;
+}
+
+.native-property-operator-style-007 {
+  gap: 8px;
+}
+
+.native-property-operator-style-008 {
+  margin: 0 0 14px;
+}
+
+.native-property-operator-style-009 {
+  margin: 12px 0;
+}
+
+.native-property-operator-style-010 {
+  font-weight: 600;
+}
+
+.native-property-operator-style-011 {
+  position: relative;
+}
+
+.native-property-operator-style-012 {
+  margin-top: 6px;
+}
+
+.native-property-operator-style-013 {
+  width: 100%;
+}
+
+.native-property-operator-style-014 {
+  box-sizing: border-box;
+}
+
+.native-property-operator-style-015 {
+  margin-top: 6px;
+}
+
+.native-property-operator-style-016 {
+  background: var(--background-secondary);
+}
+
+.native-property-operator-style-017 {
+  border: 1px solid var(--background-modifier-border);
+}
+
+.native-property-operator-style-018 {
+  border-radius: 8px;
+}
+
+.native-property-operator-style-019 {
+  padding: 12px;
+}
+
+.native-property-operator-style-020 {
+  margin: 10px 0;
+}
+
+.native-property-operator-style-021 {
+  display: flex;
+}
+
+.native-property-operator-style-022 {
+  flex-wrap: wrap;
+}
+
+.native-property-operator-style-023 {
+  gap: 12px;
+}
+
+.native-property-operator-style-024 {
+  align-items: flex-end;
+}
+
+.native-property-operator-style-025 {
+  flex: 1 1 320px;
+}
+
+.native-property-operator-style-026 {
+  min-width: 260px;
+}
+
+.native-property-operator-style-027 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-028 {
+  font-weight: 600;
+}
+
+.native-property-operator-style-029 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-030 {
+  margin-bottom: 4px;
+}
+
+.native-property-operator-style-031 {
+  width: 100%;
+}
+
+.native-property-operator-style-032 {
+  box-sizing: border-box;
+}
+
+.native-property-operator-style-033 {
+  flex: 0 0 180px;
+}
+
+.native-property-operator-style-034 {
+  min-width: 160px;
+}
+
+.native-property-operator-style-035 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-036 {
+  font-weight: 600;
+}
+
+.native-property-operator-style-037 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-038 {
+  margin-bottom: 4px;
+}
+
+.native-property-operator-style-039 {
+  width: 100%;
+}
+
+.native-property-operator-style-040 {
+  box-sizing: border-box;
+}
+
+.native-property-operator-style-041 {
+  display: flex;
+}
+
+.native-property-operator-style-042 {
+  flex-wrap: wrap;
+}
+
+.native-property-operator-style-043 {
+  gap: 8px;
+}
+
+.native-property-operator-style-044 {
+  justify-content: flex-start;
+}
+
+.native-property-operator-style-045 {
+  align-items: center;
+}
+
+.native-property-operator-style-046 {
+  margin-top: 10px;
+}
+
+.native-property-operator-style-047 {
+  padding-bottom: 120px;
+}
+
+.native-property-operator-style-048 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-049 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-050 {
+  margin: 0 0 8px;
+}
+
+.native-property-operator-style-051 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-052 {
+  margin-bottom: 6px;
+}
+
+.native-property-operator-style-053 {
+  display: flex;
+}
+
+.native-property-operator-style-054 {
+  flex-wrap: wrap;
+}
+
+.native-property-operator-style-055 {
+  align-items: center;
+}
+
+.native-property-operator-style-056 {
+  justify-content: space-between;
+}
+
+.native-property-operator-style-057 {
+  gap: 8px;
+}
+
+.native-property-operator-style-058 {
+  margin: 6px 0;
+}
+
+.native-property-operator-style-059 {
+  flex: 1 1 220px;
+}
+
+.native-property-operator-style-060 {
+  display: flex;
+}
+
+.native-property-operator-style-061 {
+  align-items: center;
+}
+
+.native-property-operator-style-062 {
+  justify-content: flex-end;
+}
+
+.native-property-operator-style-063 {
+  gap: 8px;
+}
+
+.native-property-operator-style-064 {
+  flex: 0 1 auto;
+}
+
+.native-property-operator-style-065 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-066 {
+  margin-top: 6px;
+}
+
+.native-property-operator-style-067 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-068 {
+  margin-bottom: 6px;
+}
+
+.native-property-operator-style-069 {
+  display: flex;
+}
+
+.native-property-operator-style-070 {
+  align-items: center;
+}
+
+.native-property-operator-style-071 {
+  gap: 8px;
+}
+
+.native-property-operator-style-072 {
+  margin: 4px 0;
+}
+
+.native-property-operator-style-073 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-074 {
+  margin-top: 6px;
+}
+
+.native-property-operator-style-075 {
+  margin-top: 4px;
+}
+
+.native-property-operator-style-076 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-077 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-078 {
+  margin: 12px 0;
+}
+
+.native-property-operator-style-079 {
+  font-weight: 600;
+}
+
+.native-property-operator-style-080 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-081 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-082 {
+  margin: 4px 0 6px;
+}
+
+.native-property-operator-style-083 {
+  position: relative;
+}
+
+.native-property-operator-style-084 {
+  width: 100%;
+}
+
+.native-property-operator-style-085 {
+  box-sizing: border-box;
+}
+
+.native-property-operator-style-086 {
+  margin-top: 6px;
+}
+
+.native-property-operator-style-087 {
+  position: absolute;
+}
+
+.native-property-operator-style-088 {
+  z-index: 1000;
+}
+
+.native-property-operator-style-089 {
+  background: var(--background-primary);
+}
+
+.native-property-operator-style-090 {
+  border: 1px solid var(--background-modifier-border);
+}
+
+.native-property-operator-style-091 {
+  border-radius: 6px;
+}
+
+.native-property-operator-style-092 {
+  box-shadow: var(--shadow-s);
+}
+
+.native-property-operator-style-093 {
+  overflow-y: auto;
+}
+
+.native-property-operator-style-094 {
+  padding: 6px 8px;
+}
+
+.native-property-operator-style-095 {
+  cursor: pointer;
+}
+
+.native-property-operator-style-096 {
+  font-size: 12px;
+}
+
+.native-property-operator-style-097 {
+  opacity: 0.75;
+}
+
+.native-property-operator-style-098 {
+  left: 0;
+}
+
+.native-property-operator-style-099 {
+  width: 100%;
+}
+
+.native-property-operator-style-100 {
+  overflow-y: auto;
+}
+
+.native-property-operator-suggest-visible {
+  display: block;
+}
+
+.native-property-operator-suggest-selected {
+  background: var(--background-modifier-hover);
+}
+
+.native-property-operator-suggest-opens-up {
+  bottom: calc(100% + 4px);
+  top: auto;
+}
+
+.native-property-operator-suggest-opens-down {
+  bottom: auto;
+  top: calc(100% + 4px);
+}

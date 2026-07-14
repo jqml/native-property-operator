@@ -165,14 +165,14 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   isVisibleFolder(folder) {
     if (!(folder instanceof TFolder)) return false;
     const parts = folder.path ? folder.path.split("/") : [];
-    if (parts.includes(".obsidian")) return false;
+    if (parts.includes(this.app.vault.configDir)) return false;
     return !parts.some((part) => part.startsWith(".") && part.length > 1);
   }
 
   isAllowedMarkdownFile(file) {
     if (!(file instanceof TFile) || file.extension !== "md") return false;
     const parts = file.path.split("/");
-    if (parts.includes(".obsidian")) return false;
+    if (parts.includes(this.app.vault.configDir)) return false;
     if (parts.some((part) => part.startsWith(".") && part.length > 1)) return false;
     return !this.settings.excludedFolders.some((folder) => {
       const normalized = normalizePathInput(folder);
@@ -578,10 +578,10 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
 
   renderBreadcrumb(containerEl) {
     const breadcrumbEl = containerEl.createDiv();
-    breadcrumbEl.style.display = "flex";
-    breadcrumbEl.style.alignItems = "center";
-    breadcrumbEl.style.gap = "8px";
-    breadcrumbEl.style.marginBottom = "10px";
+    breadcrumbEl.addClass("native-property-operator-style-001");
+    breadcrumbEl.addClass("native-property-operator-style-002");
+    breadcrumbEl.addClass("native-property-operator-style-003");
+    breadcrumbEl.addClass("native-property-operator-style-004");
     breadcrumbEl.createEl("button", { text: "Native Property Operator" }, (button) => {
       button.addEventListener("click", () => this.openSection("General"));
     });
@@ -599,10 +599,10 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
 
   renderRootNav(containerEl) {
     const navEl = containerEl.createDiv();
-    navEl.style.display = "flex";
-    navEl.style.flexWrap = "wrap";
-    navEl.style.gap = "8px";
-    navEl.style.margin = "0 0 14px";
+    navEl.addClass("native-property-operator-style-005");
+    navEl.addClass("native-property-operator-style-006");
+    navEl.addClass("native-property-operator-style-007");
+    navEl.addClass("native-property-operator-style-008");
     for (const section of ["General", "Properties", "Manual actions", "Auto actions"]) {
       navEl.createEl("button", { text: section }, (button) => {
         if (this.section === section) button.addClass("mod-cta");
@@ -618,7 +618,7 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
 
   renderGeneral(containerEl) {
     containerEl.createEl("p", {
-      text: "Safety: this plugin only targets normal visible Markdown notes. It always ignores .obsidian, dot folders, hidden/internal folders, and non-Markdown files. This cannot be disabled."
+      text: `Safety: this plugin only targets normal visible Markdown notes. It always ignores ${this.app.vault.configDir}, dot folders, hidden/internal folders, and non-Markdown files. This cannot be disabled.`
     });
 
     new Setting(containerEl)
@@ -664,7 +664,7 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
   }
 
   renderExcludedFolders(containerEl) {
-    containerEl.createEl("h3", { text: "Excluded visible folders" });
+    new Setting(containerEl).setName("Excluded visible folders").setHeading();
     if (this.plugin.settings.excludedFolders.length === 0) {
       containerEl.createEl("p", { text: "No excluded folders." });
     }
@@ -696,16 +696,16 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
     let pending = "";
     const folderOptions = this.plugin.getVisibleFolders();
     const addEl = containerEl.createDiv();
-    addEl.style.margin = "12px 0";
+    addEl.addClass("native-property-operator-style-009");
     const labelEl = addEl.createDiv({ text: "Add excluded folder" });
-    labelEl.style.fontWeight = "600";
+    labelEl.addClass("native-property-operator-style-010");
     const wrapperEl = addEl.createDiv();
-    wrapperEl.style.position = "relative";
-    wrapperEl.style.marginTop = "6px";
+    wrapperEl.addClass("native-property-operator-style-011");
+    wrapperEl.addClass("native-property-operator-style-012");
     const inputEl = wrapperEl.createEl("input", { type: "text" });
     inputEl.addClass("text-input");
-    inputEl.style.width = "100%";
-    inputEl.style.boxSizing = "border-box";
+    inputEl.addClass("native-property-operator-style-013");
+    inputEl.addClass("native-property-operator-style-014");
     inputEl.placeholder = "Vault-relative visible folder path";
     inputEl.addEventListener("input", () => {
       pending = normalizeFolderPath(inputEl.value);
@@ -715,7 +715,7 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       inputEl.value = folder;
     });
     const addButton = addEl.createEl("button", { text: "Add" });
-    addButton.style.marginTop = "6px";
+    addButton.addClass("native-property-operator-style-015");
     addButton.addEventListener("click", async () => {
       if (!pending) {
         new Notice("Excluded folder is required.");
@@ -736,46 +736,46 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       let nextName = property.name;
       let nextType = property.type;
       const cardEl = containerEl.createDiv({ cls: "npo-property-card" });
-      cardEl.style.background = "var(--background-secondary)";
-      cardEl.style.border = "1px solid var(--background-modifier-border)";
-      cardEl.style.borderRadius = "8px";
-      cardEl.style.padding = "12px";
-      cardEl.style.margin = "10px 0";
+      cardEl.addClass("native-property-operator-style-016");
+      cardEl.addClass("native-property-operator-style-017");
+      cardEl.addClass("native-property-operator-style-018");
+      cardEl.addClass("native-property-operator-style-019");
+      cardEl.addClass("native-property-operator-style-020");
 
       const mainRowEl = cardEl.createDiv({ cls: "npo-property-main-row" });
-      mainRowEl.style.display = "flex";
-      mainRowEl.style.flexWrap = "wrap";
-      mainRowEl.style.gap = "12px";
-      mainRowEl.style.alignItems = "flex-end";
+      mainRowEl.addClass("native-property-operator-style-021");
+      mainRowEl.addClass("native-property-operator-style-022");
+      mainRowEl.addClass("native-property-operator-style-023");
+      mainRowEl.addClass("native-property-operator-style-024");
 
       const nameControlEl = mainRowEl.createDiv({ cls: "npo-property-name-control" });
-      nameControlEl.style.flex = "1 1 320px";
-      nameControlEl.style.minWidth = "260px";
+      nameControlEl.addClass("native-property-operator-style-025");
+      nameControlEl.addClass("native-property-operator-style-026");
       const nameLabelEl = nameControlEl.createDiv({ text: "Property name" });
-      nameLabelEl.style.fontSize = "12px";
-      nameLabelEl.style.fontWeight = "600";
-      nameLabelEl.style.opacity = "0.75";
-      nameLabelEl.style.marginBottom = "4px";
+      nameLabelEl.addClass("native-property-operator-style-027");
+      nameLabelEl.addClass("native-property-operator-style-028");
+      nameLabelEl.addClass("native-property-operator-style-029");
+      nameLabelEl.addClass("native-property-operator-style-030");
       const inputEl = nameControlEl.createEl("input", { type: "text", value: property.name });
       inputEl.addClass("text-input");
-      inputEl.style.width = "100%";
-      inputEl.style.boxSizing = "border-box";
+      inputEl.addClass("native-property-operator-style-031");
+      inputEl.addClass("native-property-operator-style-032");
       inputEl.addEventListener("input", () => {
         nextName = inputEl.value.trim();
       });
 
       const typeControlEl = mainRowEl.createDiv({ cls: "npo-property-type-control" });
-      typeControlEl.style.flex = "0 0 180px";
-      typeControlEl.style.minWidth = "160px";
+      typeControlEl.addClass("native-property-operator-style-033");
+      typeControlEl.addClass("native-property-operator-style-034");
       const typeLabelEl = typeControlEl.createDiv({ text: "Type" });
-      typeLabelEl.style.fontSize = "12px";
-      typeLabelEl.style.fontWeight = "600";
-      typeLabelEl.style.opacity = "0.75";
-      typeLabelEl.style.marginBottom = "4px";
+      typeLabelEl.addClass("native-property-operator-style-035");
+      typeLabelEl.addClass("native-property-operator-style-036");
+      typeLabelEl.addClass("native-property-operator-style-037");
+      typeLabelEl.addClass("native-property-operator-style-038");
       const selectEl = typeControlEl.createEl("select");
       selectEl.addClass("dropdown");
-      selectEl.style.width = "100%";
-      selectEl.style.boxSizing = "border-box";
+      selectEl.addClass("native-property-operator-style-039");
+      selectEl.addClass("native-property-operator-style-040");
       for (const type of Object.values(PROPERTY_TYPES)) {
         selectEl.createEl("option", { text: type, value: type });
       }
@@ -785,12 +785,12 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       });
 
       const actionsEl = cardEl.createDiv({ cls: "npo-property-button-row" });
-      actionsEl.style.display = "flex";
-      actionsEl.style.flexWrap = "wrap";
-      actionsEl.style.gap = "8px";
-      actionsEl.style.justifyContent = "flex-start";
-      actionsEl.style.alignItems = "center";
-      actionsEl.style.marginTop = "10px";
+      actionsEl.addClass("native-property-operator-style-041");
+      actionsEl.addClass("native-property-operator-style-042");
+      actionsEl.addClass("native-property-operator-style-043");
+      actionsEl.addClass("native-property-operator-style-044");
+      actionsEl.addClass("native-property-operator-style-045");
+      actionsEl.addClass("native-property-operator-style-046");
       const applyButton = actionsEl.createEl("button", { text: "Apply changes..." });
       applyButton.addEventListener("click", () => {
         if (!nextName) {
@@ -1164,7 +1164,7 @@ class ActionEditorModal extends Modal {
   render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.style.paddingBottom = "120px";
+    contentEl.addClass("native-property-operator-style-047");
     contentEl.createEl("h2", { text: this.kind === "auto" ? "Auto action" : "Manual action" });
 
     new Setting(contentEl)
@@ -1267,32 +1267,32 @@ class ActionEditorModal extends Modal {
     const rootNote = fieldEl.createDiv({
       text: "Folder targets run when a Markdown note is created or moved into a target folder. By default, only notes directly inside the folder are included. Enable 'Include subfolders' to also include notes created or moved inside nested folders. Vault root (/) with Include subfolders enabled applies to all visible Markdown notes in the vault."
     });
-    rootNote.style.fontSize = "12px";
-    rootNote.style.opacity = "0.75";
-    rootNote.style.margin = "0 0 8px";
+    rootNote.addClass("native-property-operator-style-048");
+    rootNote.addClass("native-property-operator-style-049");
+    rootNote.addClass("native-property-operator-style-050");
 
     const targets = this.action.autoTargets || [];
     if (targets.length === 0) {
       const emptyEl = fieldEl.createDiv({ text: "No target folders." });
-      emptyEl.style.opacity = "0.75";
-      emptyEl.style.marginBottom = "6px";
+      emptyEl.addClass("native-property-operator-style-051");
+      emptyEl.addClass("native-property-operator-style-052");
     }
     for (const [index, target] of targets.entries()) {
       const rowEl = fieldEl.createDiv();
-      rowEl.style.display = "flex";
-      rowEl.style.flexWrap = "wrap";
-      rowEl.style.alignItems = "center";
-      rowEl.style.justifyContent = "space-between";
-      rowEl.style.gap = "8px";
-      rowEl.style.margin = "6px 0";
+      rowEl.addClass("native-property-operator-style-053");
+      rowEl.addClass("native-property-operator-style-054");
+      rowEl.addClass("native-property-operator-style-055");
+      rowEl.addClass("native-property-operator-style-056");
+      rowEl.addClass("native-property-operator-style-057");
+      rowEl.addClass("native-property-operator-style-058");
       const folderEl = rowEl.createSpan({ text: `Folder: ${displayFolderPath(target.path)}` });
-      folderEl.style.flex = "1 1 220px";
+      folderEl.addClass("native-property-operator-style-059");
       const controlsEl = rowEl.createDiv();
-      controlsEl.style.display = "flex";
-      controlsEl.style.alignItems = "center";
-      controlsEl.style.justifyContent = "flex-end";
-      controlsEl.style.gap = "8px";
-      controlsEl.style.flex = "0 1 auto";
+      controlsEl.addClass("native-property-operator-style-060");
+      controlsEl.addClass("native-property-operator-style-061");
+      controlsEl.addClass("native-property-operator-style-062");
+      controlsEl.addClass("native-property-operator-style-063");
+      controlsEl.addClass("native-property-operator-style-064");
       controlsEl.createSpan({ text: "Include subfolders" });
       new ToggleComponent(controlsEl)
         .setValue(Boolean(target.recursive))
@@ -1315,7 +1315,7 @@ class ActionEditorModal extends Modal {
     const fieldEl = this.createVerticalField(containerEl, "Add folder", "Visible vault folder path.");
     if (options.length === 0) {
       const emptyEl = fieldEl.createDiv({ text: "No remaining folder targets." });
-      emptyEl.style.opacity = "0.75";
+      emptyEl.addClass("native-property-operator-style-065");
       return;
     }
     const inputEl = this.createFullWidthInput(fieldEl, "");
@@ -1334,7 +1334,7 @@ class ActionEditorModal extends Modal {
     };
     new FolderPathSuggest(inputEl, options, addTarget);
     const addButton = fieldEl.createEl("button", { text: "Add folder" });
-    addButton.style.marginTop = "6px";
+    addButton.addClass("native-property-operator-style-066");
     addButton.addEventListener("click", () => addTarget(pending));
   }
 
@@ -1343,15 +1343,15 @@ class ActionEditorModal extends Modal {
     const targets = this.action.targets || [];
     if (targets.length === 0) {
       const emptyEl = fieldEl.createDiv({ text: "No specific targets." });
-      emptyEl.style.opacity = "0.75";
-      emptyEl.style.marginBottom = "6px";
+      emptyEl.addClass("native-property-operator-style-067");
+      emptyEl.addClass("native-property-operator-style-068");
     }
     for (const [index, target] of targets.entries()) {
       const rowEl = fieldEl.createDiv();
-      rowEl.style.display = "flex";
-      rowEl.style.alignItems = "center";
-      rowEl.style.gap = "8px";
-      rowEl.style.margin = "4px 0";
+      rowEl.addClass("native-property-operator-style-069");
+      rowEl.addClass("native-property-operator-style-070");
+      rowEl.addClass("native-property-operator-style-071");
+      rowEl.addClass("native-property-operator-style-072");
       rowEl.createSpan({ text: `${target.type === TARGETS.FOLDER ? "Folder" : "File"}: ${target.path}` });
       const removeButton = rowEl.createEl("button", { text: "Remove" });
       removeButton.addEventListener("click", () => {
@@ -1369,7 +1369,7 @@ class ActionEditorModal extends Modal {
     const fieldEl = this.createVerticalField(containerEl, label, desc);
     if (options.length === 0) {
       const emptyEl = fieldEl.createDiv({ text: `No remaining ${type === TARGETS.FOLDER ? "folder" : "file"} targets.` });
-      emptyEl.style.opacity = "0.75";
+      emptyEl.addClass("native-property-operator-style-073");
       return;
     }
     const inputEl = this.createFullWidthInput(fieldEl, "");
@@ -1390,7 +1390,7 @@ class ActionEditorModal extends Modal {
     if (type === TARGETS.FOLDER) new FolderPathSuggest(inputEl, options, addTarget);
     else new MarkdownFilePathSuggest(inputEl, options, addTarget);
     const addButton = fieldEl.createEl("button", { text: label });
-    addButton.style.marginTop = "6px";
+    addButton.addClass("native-property-operator-style-074");
     addButton.addEventListener("click", () => addTarget(pending));
   }
 
@@ -1476,9 +1476,9 @@ class ActionEditorModal extends Modal {
     let resolvedEl = fieldEl.querySelector(".npo-resolved-type");
     if (!resolvedEl) {
       resolvedEl = fieldEl.createDiv({ cls: "npo-resolved-type" });
-      resolvedEl.style.marginTop = "4px";
-      resolvedEl.style.fontSize = "12px";
-      resolvedEl.style.opacity = "0.75";
+      resolvedEl.addClass("native-property-operator-style-075");
+      resolvedEl.addClass("native-property-operator-style-076");
+      resolvedEl.addClass("native-property-operator-style-077");
     }
     const candidate = this.getSelectedPropertyCandidate();
     if (candidate) {
@@ -1530,31 +1530,31 @@ class ActionEditorModal extends Modal {
 
   createVerticalField(containerEl, label, desc) {
     const fieldEl = containerEl.createDiv({ cls: "npo-vertical-field" });
-    fieldEl.style.margin = "12px 0";
+    fieldEl.addClass("native-property-operator-style-078");
     const labelEl = fieldEl.createDiv({ text: label });
-    labelEl.style.fontWeight = "600";
+    labelEl.addClass("native-property-operator-style-079");
     if (desc) {
       const descEl = fieldEl.createDiv({ text: desc });
-      descEl.style.fontSize = "12px";
-      descEl.style.opacity = "0.75";
-      descEl.style.margin = "4px 0 6px";
+      descEl.addClass("native-property-operator-style-080");
+      descEl.addClass("native-property-operator-style-081");
+      descEl.addClass("native-property-operator-style-082");
     }
     return fieldEl;
   }
 
   createFullWidthInput(containerEl, value) {
     const wrapperEl = containerEl.createDiv({ cls: "npo-suggest-wrapper" });
-    wrapperEl.style.position = "relative";
+    wrapperEl.addClass("native-property-operator-style-083");
     const inputEl = wrapperEl.createEl("input", { type: "text", value: value || "" });
     inputEl.addClass("text-input");
-    inputEl.style.width = "100%";
-    inputEl.style.boxSizing = "border-box";
+    inputEl.addClass("native-property-operator-style-084");
+    inputEl.addClass("native-property-operator-style-085");
     return inputEl;
   }
 
   createSmallButton(containerEl, label, onClick) {
     const button = containerEl.createEl("button", { text: label });
-    button.style.marginTop = "6px";
+    button.addClass("native-property-operator-style-086");
     button.addEventListener("click", onClick);
     return button;
   }
@@ -1778,15 +1778,15 @@ class InlineSuggestInput {
     this.limit = 100;
     this.containerEl = inputEl.parentElement;
     this.dropdownEl = this.containerEl.createDiv();
-    this.dropdownEl.style.position = "absolute";
-    this.dropdownEl.style.zIndex = "1000";
-    this.dropdownEl.style.display = "none";
-    this.dropdownEl.style.background = "var(--background-primary)";
-    this.dropdownEl.style.border = "1px solid var(--background-modifier-border)";
-    this.dropdownEl.style.borderRadius = "6px";
-    this.dropdownEl.style.boxShadow = "var(--shadow-s)";
-    this.dropdownEl.style.overflowY = "auto";
-    this.dropdownEl.style.maxHeight = `${this.maxDropdownHeight}px`;
+    this.dropdownEl.addClass("native-property-operator-style-087");
+    this.dropdownEl.addClass("native-property-operator-style-088");
+    this.dropdownEl.removeClass("native-property-operator-suggest-visible");
+    this.dropdownEl.addClass("native-property-operator-style-089");
+    this.dropdownEl.addClass("native-property-operator-style-090");
+    this.dropdownEl.addClass("native-property-operator-style-091");
+    this.dropdownEl.addClass("native-property-operator-style-092");
+    this.dropdownEl.addClass("native-property-operator-style-093");
+    this.dropdownEl.setCssStyles({ maxHeight: `${this.maxDropdownHeight}px` });
 
     this.inputEl.addEventListener("input", () => this.render());
     this.inputEl.addEventListener("focus", () => this.render());
@@ -1817,19 +1817,19 @@ class InlineSuggestInput {
     }
 
     this.fitDropdownToInput();
-    this.dropdownEl.style.display = "block";
+    this.dropdownEl.addClass("native-property-operator-suggest-visible");
     for (const [index, item] of this.suggestions.entries()) {
       const itemEl = this.dropdownEl.createDiv();
-      itemEl.style.padding = "6px 8px";
-      itemEl.style.cursor = "pointer";
-      itemEl.style.background = index === this.selectedIndex ? "var(--background-modifier-hover)" : "";
+      itemEl.addClass("native-property-operator-style-094");
+      itemEl.addClass("native-property-operator-style-095");
+      itemEl.toggleClass("native-property-operator-suggest-selected", index === this.selectedIndex);
       itemEl.createDiv({ text: this.getText(item) });
       if (this.getNote) {
         const note = this.getNote(item);
         if (note) {
           const noteEl = itemEl.createDiv({ text: note });
-          noteEl.style.fontSize = "12px";
-          noteEl.style.opacity = "0.75";
+          noteEl.addClass("native-property-operator-style-096");
+          noteEl.addClass("native-property-operator-style-097");
         }
       }
       itemEl.addEventListener("mousedown", (event) => {
@@ -1865,7 +1865,7 @@ class InlineSuggestInput {
   renderSelection() {
     const items = this.dropdownEl.children;
     for (let index = 0; index < items.length; index += 1) {
-      items[index].style.background = index === this.selectedIndex ? "var(--background-modifier-hover)" : "";
+      items[index].toggleClass("native-property-operator-suggest-selected", index === this.selectedIndex);
     }
   }
 
@@ -1876,7 +1876,7 @@ class InlineSuggestInput {
   }
 
   close() {
-    this.dropdownEl.style.display = "none";
+    this.dropdownEl.removeClass("native-property-operator-suggest-visible");
     this.dropdownEl.empty();
     this.suggestions = [];
     this.selectedIndex = 0;
@@ -1899,12 +1899,12 @@ class InlineSuggestInput {
     const opensUp = availableBelow < minimumHeight && availableAbove > availableBelow;
     const available = opensUp ? availableAbove : availableBelow;
     const maxHeight = Math.min(this.maxDropdownHeight, Math.max(minimumHeight, available));
-    this.dropdownEl.style.left = "0";
-    this.dropdownEl.style.top = opensUp ? "auto" : "calc(100% + 4px)";
-    this.dropdownEl.style.bottom = opensUp ? "calc(100% + 4px)" : "auto";
-    this.dropdownEl.style.width = "100%";
-    this.dropdownEl.style.maxHeight = `${maxHeight}px`;
-    this.dropdownEl.style.overflowY = "auto";
+    this.dropdownEl.addClass("native-property-operator-style-098");
+    this.dropdownEl.toggleClass("native-property-operator-suggest-opens-up", opensUp);
+    this.dropdownEl.toggleClass("native-property-operator-suggest-opens-down", !opensUp);
+    this.dropdownEl.addClass("native-property-operator-style-099");
+    this.dropdownEl.setCssStyles({ maxHeight: `${maxHeight}px` });
+    this.dropdownEl.addClass("native-property-operator-style-100");
   }
 }
 
