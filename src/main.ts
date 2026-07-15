@@ -8,7 +8,8 @@ import {
   Setting,
   TFile,
   TFolder,
-  ToggleComponent
+  ToggleComponent,
+  normalizePath
 } from "obsidian";
 
 const PROPERTY_TYPES = {
@@ -95,6 +96,47 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   async saveSettings() {
     this.settings = normalizeSettings(this.settings);
     await this.saveData(this.settings);
+  }
+
+  getNativeTypesPath() {
+    return normalizePath(`${this.app.vault.configDir}/types.json`);
+  }
+
+  async readNativePropertyTypes() {
+    const path = this.getNativeTypesPath();
+    if (!(await this.app.vault.adapter.exists(path))) return { types: {} };
+    try {
+      const parsed = JSON.parse(await this.app.vault.adapter.read(path));
+      if (!parsed || typeof parsed !== "object") return { types: {} };
+      parsed.types = parsed.types && typeof parsed.types === "object" ? parsed.types : {};
+      return parsed;
+    } catch (error) {
+      console.error("Native Property Operator: failed to read property type registry.", error);
+      return { types: {} };
+    }
+  }
+
+  async updateNativePropertyTypeRegistry(oldName, newName, newType) {
+    const propertyName = String(newName || "").trim();
+    if (!propertyName) return;
+    const nativeType = nativeTypeIdForPropertyType(newType);
+    if (!nativeType) return;
+    const path = this.getNativeTypesPath();
+    const data = await this.readNativePropertyTypes();
+    data.types = data.types || {};
+    let changed = false;
+    const previousName = String(oldName || "").trim();
+    if (previousName && previousName !== propertyName && Object.prototype.hasOwnProperty.call(data.types, previousName)) {
+      delete data.types[previousName];
+      changed = true;
+    }
+    if (data.types[propertyName] !== nativeType) {
+      data.types[propertyName] = nativeType;
+      changed = true;
+    }
+    if (changed) {
+      await this.app.vault.adapter.write(path, `${JSON.stringify(data, null, 2)}\n`);
+    }
   }
 
   openManualActionEditor(action, context = null) {
@@ -373,7 +415,8 @@ export default class NativePropertyOperatorPlugin extends Plugin {
         path: file.path,
         status: decision.status,
         reason: decision.reason,
-        value: decision.value
+        value: decision.value,
+        originalValue: decision.originalValue
       });
     }
     return entries;
@@ -383,12 +426,15 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     const result = emptyResult();
     for (const entry of previewEntries) {
       if (entry.status !== "changed") {
-        result.skipped += 1;
-        result.reasons.push(`${entry.path}: ${entry.reason}`);
+        incrementResultForCatalogStatus(result, entry);
         continue;
       }
       try {
         await this.app.fileManager.processFrontMatter(entry.file, (frontmatter) => {
+          const currentValue = frontmatter[change.oldName];
+          if (!valuesEqual(currentValue, entry.originalValue)) {
+            throw new SkippedOperationError("Value changed since preview");
+          }
           const decision = evaluateCatalogChange(frontmatter, change);
           if (decision.status !== "changed") throw new SkippedOperationError(decision.reason);
           mutateCatalogChange(frontmatter, change, decision.value);
@@ -996,7 +1042,10 @@ class PropertyCatalogApplyModal extends Modal {
     this.newType = Object.values(PROPERTY_TYPES).includes(newType) ? newType : PROPERTY_TYPES.TEXT;
     this.onDone = onDone;
     this.overwrite = false;
-    this.normalizeValues = false;
+    this.normalizeValues = shouldDefaultNormalizeCatalogChange(this.oldType, this.newType);
+    this.dateSourceFormat = "auto";
+    this.dateOnlyToMidnight = false;
+    this.allowIncompatibleTypeChange = false;
     this.previewEntries = [];
   }
 
@@ -1012,8 +1061,16 @@ class PropertyCatalogApplyModal extends Modal {
       text: `Catalog change: ${this.oldName} (${this.oldType}) -> ${this.newName || "(missing name)"} (${this.newType}).`
     });
     contentEl.createEl("p", {
-      text: "This workflow previews any note changes first. Type-only changes update the plugin catalog after Apply; note values are only rewritten if normalization is explicitly enabled."
+      text: "Property type changes are separated into catalog metadata, safe frontmatter value conversion, and the native property type registry. Preview before applying."
     });
+
+    new Setting(contentEl)
+      .setName("Previous type")
+      .setDesc(this.oldType);
+
+    new Setting(contentEl)
+      .setName("New type")
+      .setDesc(this.newType);
 
     if (this.oldName !== this.newName) {
       new Setting(contentEl)
@@ -1027,13 +1084,45 @@ class PropertyCatalogApplyModal extends Modal {
     }
 
     new Setting(contentEl)
-      .setName("Normalize existing values to selected type")
-      .setDesc("Conservative conversion only. Unsafe or ambiguous values are skipped with reasons.")
+      .setName("Convert existing values")
+      .setDesc("Conservative conversion only. Blank/null values are preserved. Unsafe or ambiguous values are reported and preserved.")
       .addToggle((toggle) => toggle.setValue(this.normalizeValues).onChange((value) => {
         this.normalizeValues = value;
         this.previewEntries = [];
         this.render();
       }));
+
+    if (this.normalizeValues && this.newType === PROPERTY_TYPES.DATE && this.oldType === PROPERTY_TYPES.TEXT) {
+      new Setting(contentEl)
+        .setName("Source date format")
+        .setDesc("Auto accepts only unambiguous ISO formats.")
+        .addDropdown((dropdown) => dropdown
+          .addOption("auto", "Auto: unambiguous ISO formats only")
+          .addOption("ymd", "YYYY-MM-DD")
+          .addOption("dmy", "DD/MM/YYYY")
+          .addOption("mdy", "MM/DD/YYYY")
+          .setValue(this.dateSourceFormat)
+          .onChange((value) => {
+            this.dateSourceFormat = value;
+            this.previewEntries = [];
+            this.render();
+          }));
+    }
+
+    if (this.normalizeValues && this.newType === PROPERTY_TYPES.DATETIME) {
+      new Setting(contentEl)
+        .setName("Convert date-only values to 00:00:00")
+        .setDesc("When off, date-only values are incompatible with Date & time.")
+        .addToggle((toggle) => toggle.setValue(this.dateOnlyToMidnight).onChange((value) => {
+          this.dateOnlyToMidnight = value;
+          this.previewEntries = [];
+          this.render();
+        }));
+    }
+
+    new Setting(contentEl)
+      .setName("Target scope")
+      .setDesc("Visible Markdown notes only. Hidden folders, the configured vault config folder, excluded folders, and non-Markdown files are ignored.");
 
     if (this.previewEntries.length > 0) this.renderPreview(contentEl);
 
@@ -1051,7 +1140,9 @@ class PropertyCatalogApplyModal extends Modal {
       newName: this.newName,
       newType: this.newType,
       overwrite: this.overwrite,
-      normalizeValues: this.normalizeValues
+      normalizeValues: this.normalizeValues,
+      dateSourceFormat: this.dateSourceFormat,
+      dateOnlyToMidnight: this.dateOnlyToMidnight
     };
   }
 
@@ -1069,16 +1160,23 @@ class PropertyCatalogApplyModal extends Modal {
   }
 
   renderPreview(contentEl) {
-    const changed = this.previewEntries.filter((entry) => entry.status === "changed").length;
-    const skipped = this.previewEntries.filter((entry) => entry.status === "skipped").length;
+    const summary = summarizeCatalogPreview(this.previewEntries);
     contentEl.createEl("h3", { text: "Preview" });
-    contentEl.createEl("p", { text: `Changed if applied: ${changed}. Skipped: ${skipped}. Failed: 0.` });
+    contentEl.createEl("p", {
+      text: `Files checked: ${summary.total}. Compatible changes: ${summary.changed}. Already valid/unchanged: ${summary.unchanged}. Blank preserved: ${summary.blank}. Incompatible: ${summary.incompatible}. Other skipped: ${summary.skipped}. Failed reads: ${summary.failed}.`
+    });
     const list = contentEl.createEl("ul");
-    for (const entry of this.previewEntries.slice(0, 40)) {
-      list.createEl("li", { text: `${entry.status}: ${entry.path} (${entry.reason})` });
+    const representative = this.previewEntries
+      .filter((entry) => entry.status !== "skipped" || entry.reason !== `${this.oldName} does not exist`)
+      .slice(0, 50);
+    for (const entry of representative) {
+      const valuePreview = entry.status === "changed" && !valuesEqual(entry.originalValue, entry.value)
+        ? `: ${displayValueForPreview(entry.originalValue)} -> ${displayValueForPreview(entry.value)}`
+        : "";
+      list.createEl("li", { text: `${entry.status}: ${entry.path} (${entry.reason})${valuePreview}` });
     }
-    if (this.previewEntries.length > 40) {
-      contentEl.createEl("p", { text: `Showing 40 of ${this.previewEntries.length} notes.` });
+    if (this.previewEntries.length > representative.length) {
+      contentEl.createEl("p", { text: `Showing ${representative.length} representative notes from ${this.previewEntries.length} checked.` });
     }
   }
 
@@ -1091,19 +1189,40 @@ class PropertyCatalogApplyModal extends Modal {
     const hasCatalogChange = this.oldName !== this.newName || this.oldType !== this.newType;
     if (this.previewEntries.length === 0 && !hasCatalogChange) return;
 
-    const changed = this.previewEntries.filter((entry) => entry.status === "changed").length;
-    if (changed > 0) {
-      const confirmed = await confirmModal(this.app, "Apply property catalog change?", `This will modify ${changed} visible Markdown note(s).`);
+    const summary = summarizeCatalogPreview(this.previewEntries);
+    if (summary.incompatible > 0 && hasCatalogChange && isDateLikePropertyType(this.newType)) {
+      const proceed = await confirmModal(
+        this.app,
+        "Preserve incompatible values and change type?",
+        `${summary.incompatible} value(s) cannot be safely converted. Choose Apply only to convert compatible values, preserve incompatible values unchanged, and still change the native property type.`
+      );
+      if (!proceed) return;
+      this.allowIncompatibleTypeChange = true;
+    }
+
+    if (summary.changed > 1) {
+      const confirmed = await confirmModal(this.app, "Apply property catalog change?", `This will modify ${summary.changed} visible Markdown note(s).`);
       if (!confirmed) return;
-      if (this.overwrite && this.plugin.settings.confirmOverwrite) {
-        const confirmedOverwrite = await confirmModal(this.app, "Confirm overwrite", "Overwrite is enabled. Existing destination property values may be replaced.");
-        if (!confirmedOverwrite) return;
-      }
+    }
+    if (summary.changed > 0 && this.overwrite && this.plugin.settings.confirmOverwrite) {
+      const confirmedOverwrite = await confirmModal(this.app, "Confirm overwrite", "Overwrite is enabled. Existing destination property values may be replaced.");
+      if (!confirmedOverwrite) return;
     }
 
     let result = emptyResult();
-    if (changed > 0) {
+    if (summary.changed > 0) {
       result = await this.plugin.applyCatalogChange(this.getChange(), this.previewEntries);
+    } else {
+      result.blank = summary.blank;
+      result.unchanged = summary.unchanged;
+      result.skippedIncompatible = summary.incompatible;
+      result.skipped = summary.skipped + summary.incompatible + summary.blank + summary.unchanged;
+    }
+
+    if (result.failed > 0) {
+      new ResultModal(this.app, result).open();
+      new Notice("Catalog update cancelled because one or more file conversions failed.");
+      return;
     }
 
     this.plugin.settings.properties = this.plugin.settings.properties.map((item) => {
@@ -1111,9 +1230,15 @@ class PropertyCatalogApplyModal extends Modal {
       return normalizeProperty(Object.assign({}, item, { name: this.newName, type: this.newType }));
     });
     await this.plugin.saveSettings();
+    try {
+      await this.plugin.updateNativePropertyTypeRegistry(this.oldName, this.newName, this.newType);
+    } catch (error) {
+      new Notice(`Catalog saved, but native property type update failed: ${error && error.message ? error.message : String(error)}`);
+      console.error("Native Property Operator: failed to update native property type registry.", error);
+    }
     if (this.onDone) this.onDone();
-    if (changed > 0) new ResultModal(this.app, result).open();
-    else new Notice("Catalog updated. No note changes to apply.");
+    if (summary.changed > 0 || result.reasons.length > 0) new ResultModal(this.app, result).open();
+    else new Notice("Catalog and native property type updated. No note changes to apply.");
     this.close();
   }
 }
@@ -2204,6 +2329,9 @@ function oldValueTypeToPropertyType(valueType) {
 function emptyResult() {
   return {
     changed: 0,
+    unchanged: 0,
+    blank: 0,
+    skippedIncompatible: 0,
     skipped: 0,
     failed: 0,
     reasons: []
@@ -2212,7 +2340,7 @@ function emptyResult() {
 
 function displayResult(result) {
   if (!result) return "No result yet";
-  return `Changed: ${result.changed || 0}. Skipped: ${result.skipped || 0}. Failed: ${result.failed || 0}.`;
+  return `Changed: ${result.changed || 0}. Unchanged: ${result.unchanged || 0}. Blank preserved: ${result.blank || 0}. Skipped incompatible: ${result.skippedIncompatible || 0}. Skipped: ${result.skipped || 0}. Failed: ${result.failed || 0}.`;
 }
 
 function displayInitialSyncResult(action) {
@@ -2281,28 +2409,33 @@ function evaluateCatalogChange(frontmatter, change) {
 
   if (!hasOld) return { status: "skipped", reason: `${oldName} does not exist` };
   if (rename && hasNew && !change.overwrite) return { status: "skipped", reason: `${newName} already exists` };
-  if (!rename && !change.normalizeValues) return { status: "skipped", reason: "No note change selected" };
+  if (!rename && !change.normalizeValues) return { status: "skipped", reason: "No note change selected", originalValue: frontmatter[oldName] };
 
   const currentValue = frontmatter[oldName];
+  if (isBlankPropertyValue(currentValue)) {
+    if (rename) return { status: "changed", reason: "Will rename and preserve blank/null value", value: currentValue, originalValue: currentValue };
+    return { status: "blank", reason: "Blank/null value will be preserved", value: currentValue, originalValue: currentValue };
+  }
+
   let nextValue = currentValue;
   let valueChanged = false;
   if (change.normalizeValues) {
-    const converted = convertValueToPropertyType(currentValue, change.newType);
-    if (!converted.ok) return { status: "skipped", reason: converted.reason };
+    const converted = convertValueToPropertyType(currentValue, change.newType, change);
+    if (!converted.ok) return { status: "incompatible", reason: converted.reason, originalValue: currentValue };
     nextValue = converted.value;
     valueChanged = !valuesEqual(currentValue, nextValue);
   }
 
   if (!rename && change.normalizeValues && !valueChanged) {
-    return { status: "skipped", reason: "Value already matches selected type" };
+    return { status: "unchanged", reason: "Value already matches selected type", value: nextValue, originalValue: currentValue };
   }
 
   const reason = rename && valueChanged
-    ? "Will rename property and normalize value"
+    ? "Will rename property and convert value"
     : rename
       ? "Will rename property"
-      : "Will normalize value";
-  return { status: "changed", reason, value: nextValue };
+      : "Will convert value";
+  return { status: "changed", reason, value: nextValue, originalValue: currentValue };
 }
 
 function mutateCatalogChange(frontmatter, change, value) {
@@ -2314,7 +2447,9 @@ function mutateCatalogChange(frontmatter, change, value) {
   frontmatter[change.oldName] = value;
 }
 
-function convertValueToPropertyType(value, type) {
+function convertValueToPropertyType(value, type, options = {}) {
+  if (isBlankPropertyValue(value)) return { ok: true, value };
+
   if (type === PROPERTY_TYPES.TEXT) {
     if (typeof value === "string") return { ok: true, value };
     if (typeof value === "number" || typeof value === "boolean") return { ok: true, value: String(value) };
@@ -2338,13 +2473,11 @@ function convertValueToPropertyType(value, type) {
   }
 
   if (type === PROPERTY_TYPES.DATE) {
-    if (typeof value === "string" && isValidDateInput(value.trim())) return { ok: true, value: value.trim() };
-    return { ok: false, reason: "Value is not a valid date" };
+    return convertValueToDate(value, options);
   }
 
   if (type === PROPERTY_TYPES.DATETIME) {
-    if (typeof value === "string" && isValidDateTimeInput(value.trim())) return { ok: true, value: value.trim() };
-    return { ok: false, reason: "Value is not a valid date and time" };
+    return convertValueToDateTime(value, options);
   }
 
   if (type === PROPERTY_TYPES.LIST) {
@@ -2369,8 +2502,117 @@ function convertValueToPropertyType(value, type) {
   return { ok: false, reason: "Unsupported property type" };
 }
 
+function convertValueToDate(value, options = {}) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return { ok: false, reason: "Value is an invalid Date" };
+    return { ok: true, value: formatDateOnly(value) };
+  }
+  if (typeof value !== "string") return { ok: false, reason: "Value is not a date string" };
+  const text = value.trim();
+  const isoDateTime = parseIsoLikeDateTime(text);
+  if (isoDateTime.ok) return { ok: true, value: isoDateTime.date };
+  const sourceFormat = options.dateSourceFormat || "auto";
+  if (sourceFormat === "auto" || sourceFormat === "ymd") {
+    const parsed = parseDateParts(text, "ymd");
+    if (parsed.ok) return { ok: true, value: formatDateParts(parsed.year, parsed.month, parsed.day) };
+  }
+  if (sourceFormat === "dmy") {
+    const parsed = parseDateParts(text, "dmy");
+    if (parsed.ok) return { ok: true, value: formatDateParts(parsed.year, parsed.month, parsed.day) };
+  }
+  if (sourceFormat === "mdy") {
+    const parsed = parseDateParts(text, "mdy");
+    if (parsed.ok) return { ok: true, value: formatDateParts(parsed.year, parsed.month, parsed.day) };
+  }
+  return { ok: false, reason: sourceFormat === "auto" ? "Value is not an unambiguous ISO date" : "Value does not match selected source date format" };
+}
+
+function convertValueToDateTime(value, options = {}) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return { ok: false, reason: "Value is an invalid Date" };
+    return { ok: true, value: formatDateTime(value) };
+  }
+  if (typeof value !== "string") return { ok: false, reason: "Value is not a date and time string" };
+  const text = value.trim();
+  const parsedDateTime = parseIsoLikeDateTime(text);
+  if (parsedDateTime.ok && parsedDateTime.hasTime) return { ok: true, value: parsedDateTime.datetime };
+  if (isValidDateInput(text)) {
+    if (options.dateOnlyToMidnight) return { ok: true, value: `${text}T00:00:00` };
+    return { ok: false, reason: "Date-only value requires explicit midnight conversion" };
+  }
+  return { ok: false, reason: "Value is not a valid date and time" };
+}
+
+function parseIsoLikeDateTime(text) {
+  const match = String(text || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:(?:T| )(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) return { ok: false };
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!isValidDateParts(year, month, day)) return { ok: false };
+  const date = formatDateParts(year, month, day);
+  if (!match[4]) return { ok: true, date, hasTime: false };
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = match[6] === undefined ? 0 : Number(match[6]);
+  if (!isValidTimeParts(hour, minute, second)) return { ok: false };
+  return { ok: true, date, hasTime: true, datetime: `${date}T${pad2(hour)}:${pad2(minute)}:${pad2(second)}` };
+}
+
+function parseDateParts(text, format) {
+  if (format === "ymd") {
+    const match = String(text || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return { ok: false };
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    return isValidDateParts(year, month, day) ? { ok: true, year, month, day } : { ok: false };
+  }
+  const match = String(text || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return { ok: false };
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const year = Number(match[3]);
+  const month = format === "dmy" ? second : first;
+  const day = format === "dmy" ? first : second;
+  return isValidDateParts(year, month, day) ? { ok: true, year, month, day } : { ok: false };
+}
+
+function isValidDateParts(year, month, day) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isValidTimeParts(hour, minute, second) {
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23
+    && Number.isInteger(minute) && minute >= 0 && minute <= 59
+    && Number.isInteger(second) && second >= 0 && second <= 59;
+}
+
+function formatDateParts(year, month, day) {
+  return `${String(year).padStart(4, "0")}-${pad2(month)}-${pad2(day)}`;
+}
+
+function formatDateOnly(date) {
+  return formatDateParts(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+function formatDateTime(date) {
+  return `${formatDateOnly(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function isBlankPropertyValue(value) {
+  return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+}
+
 function inferPropertyType(name, values) {
-  const observed = (values || []).filter((value) => value !== null && value !== undefined);
+  const observed = (values || []).filter((value) => !isBlankPropertyValue(value));
   if (observed.length === 0) return PROPERTY_TYPES.TEXT;
   const lowerName = String(name || "").toLowerCase();
   if (observed.every((value) => Array.isArray(value))) {
@@ -2378,8 +2620,9 @@ function inferPropertyType(name, values) {
   }
   if (observed.every((value) => typeof value === "boolean" || isBooleanString(value))) return PROPERTY_TYPES.CHECKBOX;
   if (observed.every((value) => typeof value === "number" ? Number.isFinite(value) : isNumericString(value))) return PROPERTY_TYPES.NUMBER;
-  if (observed.every(isInferableDateValue)) {
-    return observed.some(isInferableDateTimeValue) ? PROPERTY_TYPES.DATETIME : PROPERTY_TYPES.DATE;
+  const dateKinds = observed.map(classifyDateLikeValue);
+  if (dateKinds.every((kind) => kind === "date" || kind === "datetime")) {
+    return dateKinds.includes("datetime") ? PROPERTY_TYPES.DATETIME : PROPERTY_TYPES.DATE;
   }
   return PROPERTY_TYPES.TEXT;
 }
@@ -2394,21 +2637,79 @@ function isNumericString(value) {
   return typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value));
 }
 
+function classifyDateLikeValue(value) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return "none";
+    return value.getHours() || value.getMinutes() || value.getSeconds() || value.getMilliseconds() ? "datetime" : "date";
+  }
+  if (typeof value !== "string") return "none";
+  const text = value.trim();
+  if (isValidDateInput(text)) return "date";
+  const parsed = parseIsoLikeDateTime(text);
+  return parsed.ok && parsed.hasTime ? "datetime" : "none";
+}
+
 function isInferableDateValue(value) {
-  return isInferableDateTimeValue(value) || isInferableDateOnlyValue(value);
+  const kind = classifyDateLikeValue(value);
+  return kind === "date" || kind === "datetime";
 }
 
 function isInferableDateTimeValue(value) {
-  if (value instanceof Date) return Number.isFinite(value.getTime());
-  if (typeof value !== "string") return false;
-  const text = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}(?:T| |'T')\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?$/.test(text)) return false;
-  const normalized = text.replace("'T'", "T").replace(" ", "T");
-  return Number.isFinite(new Date(normalized).getTime());
+  return classifyDateLikeValue(value) === "datetime";
 }
 
 function isInferableDateOnlyValue(value) {
-  return typeof value === "string" && isValidDateInput(value.trim());
+  return classifyDateLikeValue(value) === "date";
+}
+
+function nativeTypeIdForPropertyType(type) {
+  if (type === PROPERTY_TYPES.TEXT) return "text";
+  if (type === PROPERTY_TYPES.LIST) return "multiline";
+  if (type === PROPERTY_TYPES.NUMBER) return "number";
+  if (type === PROPERTY_TYPES.CHECKBOX) return "checkbox";
+  if (type === PROPERTY_TYPES.DATE) return "date";
+  if (type === PROPERTY_TYPES.DATETIME) return "datetime";
+  if (type === PROPERTY_TYPES.TAGS) return "tags";
+  return "text";
+}
+
+function shouldDefaultNormalizeCatalogChange(oldType, newType) {
+  return oldType === PROPERTY_TYPES.TEXT && (newType === PROPERTY_TYPES.DATE || newType === PROPERTY_TYPES.DATETIME);
+}
+
+function isDateLikePropertyType(type) {
+  return type === PROPERTY_TYPES.DATE || type === PROPERTY_TYPES.DATETIME;
+}
+
+function summarizeCatalogPreview(entries) {
+  return {
+    total: entries.length,
+    changed: entries.filter((entry) => entry.status === "changed").length,
+    unchanged: entries.filter((entry) => entry.status === "unchanged").length,
+    blank: entries.filter((entry) => entry.status === "blank").length,
+    incompatible: entries.filter((entry) => entry.status === "incompatible").length,
+    skipped: entries.filter((entry) => entry.status === "skipped").length,
+    failed: entries.filter((entry) => entry.status === "failed").length
+  };
+}
+
+function incrementResultForCatalogStatus(result, entry) {
+  if (entry.status === "blank") result.blank = (result.blank || 0) + 1;
+  else if (entry.status === "unchanged") result.unchanged = (result.unchanged || 0) + 1;
+  else if (entry.status === "incompatible") result.skippedIncompatible = (result.skippedIncompatible || 0) + 1;
+  result.skipped += 1;
+  result.reasons.push(`${entry.path}: ${entry.reason}`);
+}
+
+function displayValueForPreview(value) {
+  if (value instanceof Date) return formatDateTime(value);
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return value.length > 40 ? `${value.slice(0, 37)}...` : value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return "[array]";
+  if (typeof value === "object") return "[object]";
+  return String(value);
 }
 
 function valuesEqual(a, b) {
@@ -2416,14 +2717,12 @@ function valuesEqual(a, b) {
 }
 
 function isValidDateInput(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isFinite(date.getTime()) && date.toISOString().startsWith(value);
+  return parseDateParts(value, "ymd").ok === true;
 }
 
 function isValidDateTimeInput(value) {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return false;
-  return Number.isFinite(new Date(value).getTime());
+  const parsed = parseIsoLikeDateTime(String(value || "").trim());
+  return parsed.ok === true && parsed.hasTime === true;
 }
 
 function normalizePathInput(value) {

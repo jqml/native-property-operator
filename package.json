@@ -1,13 +1,14 @@
 {
   "name": "native-property-operator",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Safely preview and apply native frontmatter property operations across Markdown notes.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "lint": "eslint .",
-    "check": "npm run lint && tsc -noEmit -skipLibCheck"
+    "check": "npm run lint && npm run test && tsc -noEmit -skipLibCheck",
+    "test": "node scripts/test-conversions.mjs"
   },
   "keywords": [
     "obsidian",
