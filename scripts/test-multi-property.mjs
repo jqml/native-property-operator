@@ -47,12 +47,15 @@ const {
   applyOperations,
   buildActionPreviewState,
   buildOperationEditorModel,
+  calculateInlineSuggestHorizontalGeometry,
   captureModalScrollState,
   convertOperationsForOperation,
   emptyResult,
   evaluateOperations,
   filterExistingPropertyCandidates,
+  filterOperationPropertyCandidates,
   focusWithoutScroll,
+  getUnavailablePropertyNames,
   normalizeAction,
   normalizeAutoTargets,
   normalizeSettings,
@@ -426,10 +429,38 @@ const duplicateDestination = action(ACTIONS.RENAME, [
   { propertyName: "b", newPropertyName: "c" }
 ]);
 assert.match(validateAction(duplicateDestination, "manual"), /destination/i);
-assert.match(validateAction(action(ACTIONS.ADD, [
+const duplicateManualError = validateAction(action(ACTIONS.ADD, [
   { propertyName: "same", propertyType: PROPERTY_TYPES.TEXT, value: "a" },
   { propertyName: "same", propertyType: PROPERTY_TYPES.TEXT, value: "b" }
-]), "manual"), /more than once/i);
+]), "manual");
+assert.match(duplicateManualError, /Property 2 duplicates Property 1/i, "manual duplicate validation identifies both conflicting rows");
+assert.match(duplicateManualError, /more than once/i);
+const duplicateAutomaticError = validateAction(action(ACTIONS.REMOVE, [
+  { propertyName: "same" },
+  { propertyName: "same" }
+], {
+  trigger: "created-or-moved-into-folder",
+  autoTargets: [{ type: TARGETS.FOLDER, path: "/" }]
+}), "auto");
+assert.match(duplicateAutomaticError, /Property 2 duplicates Property 1/i, "automatic actions use the same row-specific duplicate validation");
+const duplicateExecutionPlugin = Object.create(pluginModule.default.prototype);
+let duplicatePreviewCalled = false;
+duplicateExecutionPlugin.previewAction = async () => {
+  duplicatePreviewCalled = true;
+  return [];
+};
+duplicateExecutionPlugin.saveSettings = async () => {};
+const duplicateExecutionAction = action(ACTIONS.REMOVE, [
+  { propertyName: "same" },
+  { propertyName: "same" }
+], {
+  trigger: "created-or-moved-into-folder",
+  autoTargets: [{ type: TARGETS.FOLDER, path: "/" }]
+});
+const duplicateExecutionResult = await duplicateExecutionPlugin.previewAndApplyAction(duplicateExecutionAction, null, true);
+assert.equal(duplicatePreviewCalled, false, "automatic Preview and Apply stop before resolving files when duplicate source rows fail validation");
+assert.equal(duplicateExecutionResult.failed, 1);
+assert.equal(duplicateExecutionResult.operationsFailed, 2, "blocked automatic execution reports every invalid duplicate operation row");
 assert.match(validateAction(action(ACTIONS.ADD, [{ propertyName: "checked", propertyType: PROPERTY_TYPES.CHECKBOX, value: "maybe" }]), "manual"), /Checkbox/i);
 assert.match(validateAction(action(ACTIONS.ADD, [{ propertyName: "tags", propertyType: PROPERTY_TYPES.TAGS, value: "two words" }]), "manual"), /Tags/i);
 const renameChainFrontmatter = { a: 1, b: 2 };
@@ -464,6 +495,52 @@ removableRows.splice(1, 1);
 const cardsAfterRemoval = buildOperationEditorModel(ACTIONS.REMOVE, removableRows);
 assert.deepEqual(cardsAfterRemoval.cards.map((card) => card.title), ["Property 1", "Property 2"]);
 assert.deepEqual(cardsAfterRemoval.cards.map((card) => card.row.propertyName), ["first", "last"], "removing one card preserves and renumbers remaining rows");
+
+const operationCandidates = ["created", "title", "Title", "status", "destination"].map((name) => ({ name }));
+const selectedOperationRows = [
+  { propertyName: "created" },
+  { propertyName: "title" },
+  { propertyName: "" }
+];
+assert.deepEqual(Array.from(getUnavailablePropertyNames(selectedOperationRows, 2)), ["created", "title"], "a new row treats every other selected source property as unavailable");
+assert.deepEqual(
+  filterOperationPropertyCandidates(operationCandidates, selectedOperationRows, 2).map((candidate) => candidate.name),
+  ["Title", "status", "destination"],
+  "per-row suggestions exclude other exact-case source names while preserving candidate order"
+);
+assert.deepEqual(
+  filterOperationPropertyCandidates(operationCandidates, selectedOperationRows, 0).map((candidate) => candidate.name),
+  ["created", "Title", "status", "destination"],
+  "the focused row does not exclude its own current source property"
+);
+selectedOperationRows[1].propertyName = "status";
+assert.deepEqual(
+  filterOperationPropertyCandidates(operationCandidates, selectedOperationRows, 2).map((candidate) => candidate.name),
+  ["title", "Title", "destination"],
+  "changing a row immediately releases its old property and reserves its new property"
+);
+selectedOperationRows.splice(1, 1);
+assert.equal(
+  filterOperationPropertyCandidates(operationCandidates, selectedOperationRows, 1).some((candidate) => candidate.name === "status"),
+  true,
+  "removing a row immediately makes its property available again"
+);
+selectedOperationRows.splice(0, 1);
+assert.equal(
+  filterOperationPropertyCandidates(operationCandidates, selectedOperationRows, 0).some((candidate) => candidate.name === "created"),
+  true,
+  "removing Row 1 immediately releases its selected property"
+);
+assert.deepEqual(operationCandidates.map((candidate) => candidate.name), ["created", "title", "Title", "status", "destination"], "local operation filtering never mutates the candidate catalog");
+const renameSuggestionRows = [
+  { propertyName: "created", newPropertyName: "destination" },
+  { propertyName: "" }
+];
+assert.equal(
+  filterOperationPropertyCandidates(operationCandidates, renameSuggestionRows, 1).some((candidate) => candidate.name === "destination"),
+  true,
+  "rename destination names do not hide legitimate source candidates"
+);
 
 assert.equal(buildOperationEditorModel(ACTIONS.SET, []).addButtonLabel, "Add property value");
 assert.equal(buildOperationEditorModel(ACTIONS.RENAME, []).addButtonLabel, "Add rename");
@@ -507,6 +584,28 @@ assert.equal(allBrowserCandidates.some((candidate) => candidate.name === "Proper
 assert.deepEqual(allBrowserCandidates.map((candidate) => candidate.name), allBrowserCandidates.map((candidate) => candidate.name).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }) || a.localeCompare(b)), "property browser ordering is deterministic and case-insensitive");
 assert.deepEqual(filterExistingPropertyCandidates(browserCandidates, "ALPHA").map((candidate) => candidate.name), ["alpha"], "property browser filtering is case-insensitive");
 
+const alignedPopup = calculateInlineSuggestHorizontalGeometry(
+  { left: 120, right: 360, width: 240 },
+  { left: 120 },
+  { left: 40, right: 640 },
+  800
+);
+assert.deepEqual(alignedPopup, { left: 0, width: 240 }, "inline popup left edge and width match the input where viewport space permits");
+const rightClampedPopup = calculateInlineSuggestHorizontalGeometry(
+  { left: 560, right: 760, width: 200 },
+  { left: 560 },
+  { left: 40, right: 650 },
+  800
+);
+assert.deepEqual(rightClampedPopup, { left: 0, width: 90 }, "inline popup width clamps at the modal right boundary without right-edge anchoring");
+const leftClampedPopup = calculateInlineSuggestHorizontalGeometry(
+  { left: 20, right: 220, width: 200 },
+  { left: 20 },
+  { left: 40, right: 650 },
+  800
+);
+assert.deepEqual(leftClampedPopup, { left: 20, width: 200 }, "inline popup shifts inside the modal when an input extends beyond its left boundary");
+
 let anchorTop = 120;
 const scrollEl = {
   scrollTop: 360,
@@ -547,6 +646,8 @@ assert.match(operationEditorSource, /for \(const card of editorModel\.cards\)/, 
 assert.ok(operationEditorSource.indexOf('cls: "npo-operation-card-header"') < operationEditorSource.indexOf('"Remove"'), "Remove button belongs to the card header");
 assert.match(operationEditorSource, /text: "No properties configured\."/, "empty operation list has a clean empty state");
 assert.doesNotMatch(operationEditorSource, /Add operation row/);
+assert.match(operationEditorSource, /\(\) => filterOperationPropertyCandidates\(/, "each card obtains live suggestions from the current operation rows");
+assert.match(operationEditorSource, /this\.action\.operations,\s*index/s, "suggestion filtering ignores only the focused operation row");
 const renderSource = source.slice(source.indexOf("  render(options = {}) {", source.indexOf("class ActionEditorModal")), source.indexOf("  addOperationEditor(contentEl) {"));
 assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Overwrite existing values")'), "action-level overwrite setting renders after the property list");
 assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Add if missing")'), "action-level add-if-missing setting renders after the property list");
@@ -573,6 +674,33 @@ assert.match(source, /captureModalScrollState/);
 assert.match(source, /focus\(\{ preventScroll: true \}\)/);
 assert.match(source, /scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\)/);
 assert.doesNotMatch(source, /window\.scroll|document\.documentElement\.scroll|scrollTo\(/, "no global page scroll call is used");
+const inlineChooseSource = source.slice(source.indexOf("  choose(item) {", source.indexOf("class InlineSuggestInput")), source.indexOf("  close() {", source.indexOf("class InlineSuggestInput")));
+assert.ok(inlineChooseSource.indexOf("this.close();") < inlineChooseSource.indexOf("this.onChoose(item);"), "choosing an operation suggestion closes its popup before the scroll-preserving refresh");
+const inlineSuggestSource = source.slice(source.indexOf("class InlineSuggestInput"), source.indexOf("class PropertySuggestModal"));
+assert.match(inlineSuggestSource, /npo-inline-suggest npo-inline-suggest-list/);
+assert.match(inlineSuggestSource, /createEl\("button", \{ cls: "npo-inline-suggest-item"/);
+assert.ok(inlineSuggestSource.indexOf('cls: "npo-inline-suggest-title"') < inlineSuggestSource.indexOf('cls: "npo-inline-suggest-meta"'), "metadata is constructed beneath the candidate title");
+assert.match(inlineSuggestSource, /this\.ownerWindow\.innerWidth/, "popup geometry uses the input owner window rather than the global window");
+assert.match(inlineSuggestSource, /calculateInlineSuggestHorizontalGeometry/);
+assert.doesNotMatch(inlineSuggestSource, /right:\s*`|style\.right|setCssStyles\(\{[^}]*right:/s, "popup positioning never defaults to a right-edge coordinate");
+for (const suggestionClass of ["PropertyInputSuggest", "FolderPathSuggest", "MarkdownFilePathSuggest"]) {
+  const classStart = inlineSuggestSource.indexOf(`class ${suggestionClass}`);
+  assert.ok(classStart >= 0, `${suggestionClass} uses the shared inline suggestion implementation`);
+}
+const inlineStyles = styles.slice(styles.indexOf(".npo-inline-suggest {"), styles.indexOf(".npo-action-editor-content"));
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*right:\s*auto/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*overflow-x:\s*hidden/s);
+assert.match(inlineStyles, /\.npo-inline-suggest-item\s*\{[^}]*width:\s*100%/s);
+assert.match(inlineStyles, /\.npo-inline-suggest-item\s*\{[^}]*text-align:\s*left/s);
+assert.match(inlineStyles, /\.npo-inline-suggest-title,[^}]*text-align:\s*left/s);
+assert.match(inlineStyles, /\.npo-inline-suggest-meta\s*\{[^}]*color:\s*var\(--text-muted\)/s);
+assert.doesNotMatch(inlineStyles, /justify-content:\s*space-between|margin-left:\s*auto/);
+assert.doesNotMatch(styles, /(^|\n)button\s*\{|(^|\n)\.setting-item(-control)?\s*\{/m, "inline alignment does not introduce global button or Setting rules");
+assert.doesNotMatch(operationEditorSource, /npo-inline-suggest-item|npo-inline-suggest-opens-/, "operation cards never receive popup item or absolute-position classes");
+const actionEditorRenderSource = source.slice(source.indexOf("  render(options = {}) {", source.indexOf("class ActionEditorModal")), source.indexOf("  rerenderPreservingScroll", source.indexOf("class ActionEditorModal")));
+assert.match(actionEditorRenderSource, /validateAction\(this\.action, this\.kind\)/, "Save is blocked by shared duplicate validation");
+const previewModalSource = source.slice(source.indexOf("class PreviewModal"), source.indexOf("class ResultModal"));
+assert.ok((previewModalSource.match(/validateAction\(/g) || []).length >= 2, "Preview and Apply independently block duplicate source rows");
 assert.doesNotMatch(source, /getDirectMarkdownFiles|direct child Markdown notes|Include subfolders/);
 assert.match(source, /getRecursiveMarkdownFilesByPath/);
 assert.match(source, /No Markdown files matched the selected targets/);

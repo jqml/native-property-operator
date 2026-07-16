@@ -597,6 +597,19 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   }
 
   async previewAndApplyAction(action, context = null, isAuto = false) {
+    const actionKind = isAuto || action.trigger ? "auto" : "manual";
+    const validationError = validateAction(action, actionKind);
+    if (validationError) {
+      const result = emptyResult();
+      result.failed = 1;
+      result.operationsFailed = normalizeOperations(action).length;
+      result.reasons.push(`Action validation failed: ${validationError}`);
+      action.lastResult = result;
+      action.lastResultAt = new Date().toISOString();
+      await this.saveSettings();
+      if (!isAuto) new Notice(validationError);
+      return result;
+    }
     const previewEntries = await this.previewAction(action, context);
     const result = await this.applyAction(action, previewEntries);
     action.lastResult = result;
@@ -1675,7 +1688,11 @@ class ActionEditorModal extends Modal {
           row.propertyType = this.plugin.getPropertyType(row.propertyName, row.propertyType || PROPERTY_TYPES.TEXT);
         }
       });
-      new PropertyInputSuggest(sourceInput, candidates, (candidate) => {
+      new PropertyInputSuggest(sourceInput, () => filterOperationPropertyCandidates(
+        candidates,
+        this.action.operations,
+        index
+      ), (candidate) => {
         row.propertyName = candidate.name;
         if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
           row.propertyType = this.plugin.getPropertyType(candidate.name, row.propertyType || PROPERTY_TYPES.TEXT);
@@ -1943,7 +1960,7 @@ class PreviewModal extends Modal {
   }
 
   async onOpen() {
-    const error = validateAction(this.action, "manual");
+    const error = validateAction(this.action, this.action.trigger ? "auto" : "manual");
     if (error) {
       new Notice(error);
       this.close();
@@ -1979,6 +1996,11 @@ class PreviewModal extends Modal {
   }
 
   async apply() {
+    const validationError = validateAction(this.action, this.action.trigger ? "auto" : "manual");
+    if (validationError) {
+      new Notice(validationError);
+      return;
+    }
     if (this.previewEntries.length === 0) {
       new Notice(buildActionPreviewState(this.previewEntries, this.action, this.context).message);
       return;
@@ -2146,16 +2168,7 @@ class InlineSuggestInput {
     this.limit = 100;
     this.ownerWindow = getOwnerWindow(inputEl);
     this.containerEl = inputEl.parentElement;
-    this.dropdownEl = this.containerEl.createDiv();
-    this.dropdownEl.addClass("native-property-operator-style-087");
-    this.dropdownEl.addClass("native-property-operator-style-088");
-    this.dropdownEl.removeClass("native-property-operator-suggest-visible");
-    this.dropdownEl.addClass("native-property-operator-style-089");
-    this.dropdownEl.addClass("native-property-operator-style-090");
-    this.dropdownEl.addClass("native-property-operator-style-091");
-    this.dropdownEl.addClass("native-property-operator-style-092");
-    this.dropdownEl.addClass("native-property-operator-style-093");
-    this.dropdownEl.setCssStyles({ maxHeight: `${this.maxDropdownHeight}px` });
+    this.dropdownEl = this.containerEl.createDiv({ cls: "npo-inline-suggest npo-inline-suggest-list" });
 
     this.inputEl.addEventListener("input", () => this.render());
     this.inputEl.addEventListener("focus", () => this.render());
@@ -2186,19 +2199,15 @@ class InlineSuggestInput {
     }
 
     this.fitDropdownToInput();
-    this.dropdownEl.addClass("native-property-operator-suggest-visible");
+    this.dropdownEl.addClass("npo-inline-suggest-visible");
     for (const [index, item] of this.suggestions.entries()) {
-      const itemEl = this.dropdownEl.createDiv();
-      itemEl.addClass("native-property-operator-style-094");
-      itemEl.addClass("native-property-operator-style-095");
-      itemEl.toggleClass("native-property-operator-suggest-selected", index === this.selectedIndex);
-      itemEl.createDiv({ text: this.getText(item) });
+      const itemEl = this.dropdownEl.createEl("button", { cls: "npo-inline-suggest-item", type: "button" });
+      itemEl.toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
+      itemEl.createDiv({ cls: "npo-inline-suggest-title", text: this.getText(item) });
       if (this.getNote) {
         const note = this.getNote(item);
         if (note) {
-          const noteEl = itemEl.createDiv({ text: note });
-          noteEl.addClass("native-property-operator-style-096");
-          noteEl.addClass("native-property-operator-style-097");
+          itemEl.createDiv({ cls: "npo-inline-suggest-meta", text: note });
         }
       }
       itemEl.addEventListener("mousedown", (event) => {
@@ -2234,18 +2243,18 @@ class InlineSuggestInput {
   renderSelection() {
     const items = this.dropdownEl.children;
     for (let index = 0; index < items.length; index += 1) {
-      items[index].toggleClass("native-property-operator-suggest-selected", index === this.selectedIndex);
+      items[index].toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
     }
   }
 
   choose(item) {
     this.inputEl.value = this.getText(item);
-    this.onChoose(item);
     this.close();
+    this.onChoose(item);
   }
 
   close() {
-    this.dropdownEl.removeClass("native-property-operator-suggest-visible");
+    this.dropdownEl.removeClass("npo-inline-suggest-visible");
     this.dropdownEl.empty();
     this.suggestions = [];
     this.selectedIndex = 0;
@@ -2253,8 +2262,11 @@ class InlineSuggestInput {
 
   fitDropdownToInput() {
     const inputRect = this.inputEl.getBoundingClientRect();
+    const containerRect = this.containerEl.getBoundingClientRect();
     const modalEl = this.inputEl.closest(".modal-content") || this.inputEl.closest(".modal");
     const modalRect = modalEl ? modalEl.getBoundingClientRect() : {
+      left: 0,
+      right: this.ownerWindow.innerWidth,
       top: 0,
       bottom: this.ownerWindow.innerHeight
     };
@@ -2268,12 +2280,19 @@ class InlineSuggestInput {
     const opensUp = availableBelow < minimumHeight && availableAbove > availableBelow;
     const available = opensUp ? availableAbove : availableBelow;
     const maxHeight = Math.min(this.maxDropdownHeight, Math.max(minimumHeight, available));
-    this.dropdownEl.addClass("native-property-operator-style-098");
-    this.dropdownEl.toggleClass("native-property-operator-suggest-opens-up", opensUp);
-    this.dropdownEl.toggleClass("native-property-operator-suggest-opens-down", !opensUp);
-    this.dropdownEl.addClass("native-property-operator-style-099");
-    this.dropdownEl.setCssStyles({ maxHeight: `${maxHeight}px` });
-    this.dropdownEl.addClass("native-property-operator-style-100");
+    const horizontal = calculateInlineSuggestHorizontalGeometry(
+      inputRect,
+      containerRect,
+      modalRect,
+      this.ownerWindow.innerWidth
+    );
+    this.dropdownEl.toggleClass("npo-inline-suggest-opens-up", opensUp);
+    this.dropdownEl.toggleClass("npo-inline-suggest-opens-down", !opensUp);
+    this.dropdownEl.setCssStyles({
+      left: `${horizontal.left}px`,
+      width: `${horizontal.width}px`,
+      maxHeight: `${maxHeight}px`
+    });
   }
 }
 
@@ -2291,9 +2310,10 @@ class MarkdownFilePathSuggest extends InlineSuggestInput {
 
 class PropertyInputSuggest extends InlineSuggestInput {
   constructor(inputEl, candidates, onChoose) {
+    const getCandidates = typeof candidates === "function" ? candidates : () => candidates;
     super(
       inputEl,
-      () => candidates,
+      getCandidates,
       (candidate) => candidate.name,
       onChoose,
       (candidate) => propertyCandidateNote(candidate),
@@ -2691,11 +2711,14 @@ function validateAction(action, kind) {
   if (!action.name) return "Action name is required.";
   const operations = normalizeOperations(action);
   if (operations.length === 0) return "Add at least one property operation.";
-  const names = new Set();
-  for (const row of operations) {
+  const sourceRowsByName = new Map();
+  for (const [index, row] of operations.entries()) {
     if (!row.propertyName) return "Every operation row needs a property name.";
-    if (names.has(row.propertyName)) return `Property is configured more than once: ${row.propertyName}.`;
-    names.add(row.propertyName);
+    if (sourceRowsByName.has(row.propertyName)) {
+      const firstIndex = sourceRowsByName.get(row.propertyName);
+      return `Property ${index + 1} duplicates Property ${firstIndex + 1}; property is configured more than once: ${row.propertyName}.`;
+    }
+    sourceRowsByName.set(row.propertyName, index);
     if (action.operation === ACTIONS.RENAME && !row.newPropertyName) return "Every rename row needs a new property name.";
     if (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) {
       const valueError = validateOperationValue(row);
@@ -3302,6 +3325,22 @@ function scheduleModalScrollRestore(contentEl, state, afterRestore = null) {
   else restore();
 }
 
+function calculateInlineSuggestHorizontalGeometry(inputRect, containerRect, modalRect, viewportWidth) {
+  const viewportRight = Math.max(0, Number(viewportWidth) || 0);
+  const modalLeft = Number.isFinite(modalRect && modalRect.left) ? modalRect.left : 0;
+  const modalRight = Number.isFinite(modalRect && modalRect.right) ? modalRect.right : viewportRight;
+  const boundaryLeft = Math.max(0, modalLeft);
+  const boundaryRight = Math.max(boundaryLeft, Math.min(viewportRight, modalRight));
+  const inputLeft = Number.isFinite(inputRect && inputRect.left) ? inputRect.left : boundaryLeft;
+  const inputWidth = Number.isFinite(inputRect && inputRect.width)
+    ? Math.max(0, inputRect.width)
+    : Math.max(0, Number(inputRect && inputRect.right) - inputLeft);
+  const popupLeft = Math.min(Math.max(inputLeft, boundaryLeft), boundaryRight);
+  const popupWidth = Math.max(0, Math.min(inputWidth, boundaryRight - popupLeft));
+  const containerLeft = Number.isFinite(containerRect && containerRect.left) ? containerRect.left : inputLeft;
+  return { left: popupLeft - containerLeft, width: popupWidth };
+}
+
 function normalizeFolderPath(value) {
   const raw = String(value || "").trim();
   if (!raw || raw === "/") return "/";
@@ -3333,6 +3372,24 @@ function uniqueStrings(values) {
   return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
+function getUnavailablePropertyNames(operations, currentIndex) {
+  const unavailable = new Set();
+  for (const [index, row] of (operations || []).entries()) {
+    if (index === currentIndex) continue;
+    const propertyName = String(row && row.propertyName || "").trim();
+    if (propertyName) unavailable.add(propertyName);
+  }
+  return unavailable;
+}
+
+function filterOperationPropertyCandidates(candidates, operations, currentIndex) {
+  const unavailable = getUnavailablePropertyNames(operations, currentIndex);
+  return (candidates || []).filter((candidate) => {
+    const propertyName = String(candidate && candidate.name || "").trim();
+    return propertyName && !unavailable.has(propertyName);
+  });
+}
+
 function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -3344,6 +3401,7 @@ export {
   applyOperations,
   buildActionPreviewState,
   buildOperationEditorModel,
+  calculateInlineSuggestHorizontalGeometry,
   captureModalScrollState,
   convertOperationsForOperation,
   createEmptyAction,
@@ -3351,8 +3409,10 @@ export {
   emptyResult,
   evaluateOperations,
   filterExistingPropertyCandidates,
+  filterOperationPropertyCandidates,
   focusWithoutScroll,
   folderTargetMatchesPath,
+  getUnavailablePropertyNames,
   normalizeAction,
   normalizeAutoTargets,
   normalizeSettings,

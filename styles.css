@@ -341,76 +341,80 @@
   margin-top: 6px;
 }
 
-.native-property-operator-style-087 {
+.npo-inline-suggest {
   position: absolute;
-}
-
-.native-property-operator-style-088 {
   z-index: 1000;
-}
-
-.native-property-operator-style-089 {
-  background: var(--background-primary);
-}
-
-.native-property-operator-style-090 {
+  display: none;
+  right: auto;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--background-modifier-border);
-}
-
-.native-property-operator-style-091 {
   border-radius: 6px;
-}
-
-.native-property-operator-style-092 {
+  background: var(--background-primary);
   box-shadow: var(--shadow-s);
+  text-align: left;
 }
 
-.native-property-operator-style-093 {
-  overflow-y: auto;
+.npo-inline-suggest-list {
+  justify-content: flex-start;
+  align-items: stretch;
+  text-align: left;
 }
 
-.native-property-operator-style-094 {
-  padding: 6px 8px;
-}
-
-.native-property-operator-style-095 {
-  cursor: pointer;
-}
-
-.native-property-operator-style-096 {
-  font-size: 12px;
-}
-
-.native-property-operator-style-097 {
-  opacity: 0.75;
-}
-
-.native-property-operator-style-098 {
-  left: 0;
-}
-
-.native-property-operator-style-099 {
-  width: 100%;
-}
-
-.native-property-operator-style-100 {
-  overflow-y: auto;
-}
-
-.native-property-operator-suggest-visible {
+.npo-inline-suggest-visible {
   display: block;
 }
 
-.native-property-operator-suggest-selected {
+.npo-inline-suggest-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  white-space: normal;
+}
+
+.npo-inline-suggest-item:hover,
+.npo-inline-suggest-item-selected {
   background: var(--background-modifier-hover);
 }
 
-.native-property-operator-suggest-opens-up {
+.npo-inline-suggest-title,
+.npo-inline-suggest-meta {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.npo-inline-suggest-title {
+  font-weight: 500;
+}
+
+.npo-inline-suggest-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.npo-inline-suggest-opens-up {
   bottom: calc(100% + 4px);
   top: auto;
 }
 
-.native-property-operator-suggest-opens-down {
+.npo-inline-suggest-opens-down {
   bottom: auto;
   top: calc(100% + 4px);
 }
