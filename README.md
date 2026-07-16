@@ -13,8 +13,8 @@ The plugin only targets visible Markdown notes. It ignores the Obsidian configur
 - Maintain a property catalog with native property types.
 - Add existing detected frontmatter properties to the catalog with conservative type inference.
 - Preview and apply catalog name/type changes.
-- Create saved manual actions for adding, removing, renaming, or setting property values.
-- Create auto actions that run when Markdown notes are created in or moved into target folders.
+- Create saved manual actions for adding, removing, renaming, setting values, or changing types for multiple properties.
+- Create auto actions with the same typed multi-property rows; they run when Markdown notes are created in or moved into target folders.
 - Preview changes before applying them.
 - Report changed, skipped, and failed counts with reasons.
 - Confirm multi-file operations and overwrite operations.
@@ -43,6 +43,9 @@ Saved manual actions can target the current file, the current folder, or specifi
 - Remove property
 - Rename property
 - Set/change property value
+- Change property type
+
+Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
 
 Before applying a manual action, the plugin shows a preview with changed and skipped notes. Applying multiple files asks for confirmation. If overwrite is enabled and overwrite confirmation is on, the plugin asks for an additional confirmation.
 
@@ -56,7 +59,7 @@ When enabling an auto action for the first time, the plugin can preview synchron
 
 ## Conflicts and results
 
-Expected conflicts are skipped, not treated as failures. Examples include missing source properties, existing destination properties when overwrite is disabled, and values that cannot be safely converted during catalog normalization. Real write exceptions are counted as failed. One failed file does not stop the remaining files.
+Expected conflicts are skipped, not treated as failures. Examples include missing source properties, existing destination properties when overwrite is disabled, and values that cannot be safely converted. Rename destination duplicates and cycles are rejected before Apply. Automatic actions never overwrite existing values: conflicts are explicitly reported as skipped because automatic runs have no confirmation step. Manual type changes require explicit confirmation before synchronizing a native type while incompatible values remain. Automatic type changes preserve incompatible values and skip that row's native type/catalog synchronization. Results keep file-level and operation-level changed, skipped, incompatible, and failed counts separate; one invalid row does not prevent other rows for the same file from applying.
 
 ## Installation
 

@@ -4,7 +4,7 @@ import { builtinModules } from "node:module";
 
 const production = process.argv[2] === "production";
 
-const context = await esbuild.context({
+const buildOptions = {
   banner: {
     js: "/* Native Property Operator */"
   },
@@ -33,11 +33,11 @@ const context = await esbuild.context({
   treeShaking: true,
   outfile: "main.js",
   minify: production
-});
+};
 
 if (production) {
-  await context.rebuild();
-  await context.dispose();
+  await esbuild.build(buildOptions);
 } else {
+  const context = await esbuild.context(buildOptions);
   await context.watch();
 }

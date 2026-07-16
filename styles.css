@@ -1,5 +1,13 @@
 
 /* Extracted static layout classes for Obsidian community lint compatibility. */
+.npo-operation-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
 .native-property-operator-style-001 {
   display: flex;
 }

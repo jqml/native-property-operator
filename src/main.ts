@@ -26,7 +26,8 @@ const ACTIONS = {
   ADD: "add",
   REMOVE: "remove",
   RENAME: "rename",
-  SET: "set"
+  SET: "set",
+  TYPE: "type"
 };
 
 const TARGETS = {
@@ -54,7 +55,8 @@ const ACTION_LABELS = {
   [ACTIONS.ADD]: "Add property",
   [ACTIONS.REMOVE]: "Remove property",
   [ACTIONS.RENAME]: "Rename property",
-  [ACTIONS.SET]: "Set/change property value"
+  [ACTIONS.SET]: "Set/change property value",
+  [ACTIONS.TYPE]: "Change property type"
 };
 
 const TARGET_LABELS = {
@@ -67,7 +69,9 @@ const TARGET_LABELS = {
 
 export default class NativePropertyOperatorPlugin extends Plugin {
   async onload() {
-    this.settings = normalizeSettings(Object.assign({}, DEFAULT_SETTINGS, await this.loadData()));
+    const loadedData = await this.loadData();
+    this.settings = normalizeSettings(Object.assign({}, DEFAULT_SETTINGS, loadedData));
+    if (needsActionMigration(loadedData)) await this.saveSettings();
     this.autoRunKeys = new Set();
 
     this.addCommand({
@@ -461,12 +465,14 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     for (const file of files) {
       const cache = this.app.metadataCache.getFileCache(file);
       const frontmatter = cache && cache.frontmatter ? cache.frontmatter : {};
-      const decision = this.evaluateFrontmatter(frontmatter, operation);
+      const decisions = evaluateOperations(frontmatter, operation, { automatic: Boolean(operation.trigger) });
+      const changed = decisions.filter((item) => item.status === "changed").length;
       entries.push({
         file,
         path: file.path,
-        status: decision.status,
-        reason: decision.reason
+        status: changed > 0 ? "changed" : "skipped",
+        reason: summarizeOperationDecisions(decisions),
+        operations: decisions
       });
     }
 
@@ -474,65 +480,95 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   }
 
   evaluateFrontmatter(frontmatter, action) {
-    const propertyName = action.propertyName;
-    const newPropertyName = action.newPropertyName;
-    const hasProperty = Object.prototype.hasOwnProperty.call(frontmatter, propertyName);
-    const hasNewProperty = newPropertyName ? Object.prototype.hasOwnProperty.call(frontmatter, newPropertyName) : false;
-
-    if (!propertyName) return { status: "skipped", reason: "Missing property name" };
-
-    if (action.operation === ACTIONS.ADD) {
-      if (hasProperty && !action.overwrite) return { status: "skipped", reason: "Property already exists" };
-      return { status: "changed", reason: hasProperty ? "Will overwrite property value" : "Will add property" };
-    }
-
-    if (action.operation === ACTIONS.REMOVE) {
-      if (!hasProperty) return { status: "skipped", reason: "Property does not exist" };
-      return { status: "changed", reason: "Will remove property" };
-    }
-
-    if (action.operation === ACTIONS.RENAME) {
-      if (!newPropertyName) return { status: "skipped", reason: "Missing new property name" };
-      if (propertyName === newPropertyName) return { status: "skipped", reason: "Source and destination are the same" };
-      if (!hasProperty) return { status: "skipped", reason: "Source property does not exist" };
-      if (hasNewProperty && !action.overwrite) return { status: "skipped", reason: "Destination property already exists" };
-      return { status: "changed", reason: hasNewProperty ? "Will overwrite destination property" : "Will rename property" };
-    }
-
-    if (action.operation === ACTIONS.SET) {
-      if (!hasProperty && !action.addIfMissing) return { status: "skipped", reason: "Property does not exist" };
-      return { status: "changed", reason: hasProperty ? "Will change property value" : "Will add missing property" };
-    }
-
-    return { status: "skipped", reason: "Unknown operation" };
+    const decisions = evaluateOperations(frontmatter, action);
+    return decisions.find((item) => item.status === "changed") || decisions[0] || {
+      status: "skipped",
+      reason: "No property operations configured"
+    };
   }
 
-  async applyAction(action, previewEntries) {
+  async applyAction(action, previewEntries, options = {}) {
     const result = emptyResult();
     const operation = normalizeAction(action);
+    const automatic = Boolean(operation.trigger);
+    const incompatibleTypeRows = new Set();
+    const failedTypeRows = new Set();
+    const successfulTypeRows = new Set();
+    let typeConversionFailed = false;
 
     for (const entry of previewEntries) {
-      if (entry.status !== "changed") {
-        result.skipped += 1;
-        result.reasons.push(`${entry.path}: ${entry.reason}`);
-        continue;
-      }
-
+      let outcome = { changed: 0, skipped: 0, failed: 0, incompatible: 0 };
+      let callbackFailed = false;
       try {
         await this.app.fileManager.processFrontMatter(entry.file, (frontmatter) => {
-          const decision = this.evaluateFrontmatter(frontmatter, operation);
-          if (decision.status !== "changed") throw new SkippedOperationError(decision.reason);
-          this.mutateFrontmatter(frontmatter, operation);
+          const decisions = evaluateOperations(frontmatter, operation, { automatic });
+          outcome = applyOperations(frontmatter, operation, decisions, result, entry.path);
+          for (const decision of decisions) {
+            if (decision.status === "incompatible" && decision.propertyName) incompatibleTypeRows.add(decision.propertyName);
+            if (operation.operation === ACTIONS.TYPE && decision.status === "changed" && decision.propertyName) successfulTypeRows.add(decision.propertyName);
+            if (operation.operation === ACTIONS.TYPE && decision.status === "incompatible" && !automatic && options.allowIncompatibleTypeChange && decision.propertyName) successfulTypeRows.add(decision.propertyName);
+          }
         });
-        result.changed += 1;
       } catch (error) {
-        if (error instanceof SkippedOperationError) {
-          result.skipped += 1;
-          result.reasons.push(`${entry.path}: ${error.message}`);
-        } else {
-          result.failed += 1;
-          result.reasons.push(`${entry.path}: ${error && error.message ? error.message : String(error)}`);
+        callbackFailed = true;
+        if (operation.operation === ACTIONS.TYPE) typeConversionFailed = true;
+        result.failed += 1;
+        result.filesFailed += 1;
+        result.reasons.push(`${entry.path}: ${error && error.message ? error.message : String(error)}`);
+      }
+      if (operation.operation === ACTIONS.TYPE && outcome.failedRows) {
+        for (const propertyName of outcome.failedRows) failedTypeRows.add(propertyName);
+        if (outcome.failedRows.length > 0) typeConversionFailed = true;
+      }
+      if (outcome.changed > 0) result.changed += 1;
+      if (!callbackFailed && outcome.failed > 0) {
+        result.failed += 1;
+        result.filesFailed += 1;
+      }
+      if (outcome.changed === 0 && outcome.failed === 0 && outcome.skipped > 0) result.skipped += 1;
+      if (outcome.changed > 0) result.filesChanged += 1;
+      if (outcome.changed === 0 && outcome.failed === 0 && outcome.skipped > 0) result.filesSkipped += 1;
+    }
+
+    if (operation.operation === ACTIONS.TYPE) {
+      const registryRows = uniqueTypeOperations(operation.operations);
+      for (const row of registryRows) {
+        if (!successfulTypeRows.has(row.propertyName)) {
+          result.registrySkipped += 1;
+          result.reasons.push(`${row.propertyName}: native type synchronization skipped because no target contained a safely changeable value`);
+          continue;
         }
+        if (typeConversionFailed && failedTypeRows.has(row.propertyName)) {
+          result.registrySkipped += 1;
+          result.reasons.push(`${row.propertyName}: native type synchronization skipped because its value conversion failed`);
+          continue;
+        }
+        if (typeConversionFailed && failedTypeRows.size === 0) {
+          result.registrySkipped += 1;
+          result.reasons.push(`${row.propertyName}: native type synchronization skipped because a target file conversion failed`);
+          continue;
+        }
+        if (automatic && incompatibleTypeRows.has(row.propertyName)) {
+          result.registrySkipped += 1;
+          result.reasons.push(`${row.propertyName}: native type synchronization skipped because an automatic value conversion was incompatible`);
+          continue;
+        }
+        if (!automatic && incompatibleTypeRows.has(row.propertyName) && !options.allowIncompatibleTypeChange) {
+          result.registrySkipped += 1;
+          result.reasons.push(`${row.propertyName}: native type synchronization requires explicit incompatible-value confirmation`);
+          continue;
+        }
+        try {
+          await this.updateNativePropertyTypeRegistry(row.propertyName, row.propertyName, row.propertyType);
+        } catch (error) {
+          result.registryFailed += 1;
+          const reason = `native type synchronization failed: ${error && error.message ? error.message : String(error)}`;
+          result.reasons.push(`${row.propertyName}: ${reason}`);
+          recordOperationResult(result, "types.json", row, "failed", reason);
+          continue;
+        }
+        const catalogProperty = (this.settings && this.settings.properties || []).find((property) => property.name === row.propertyName);
+        if (catalogProperty) catalogProperty.type = row.propertyType;
       }
     }
 
@@ -540,20 +576,8 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   }
 
   mutateFrontmatter(frontmatter, action) {
-    if (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) {
-      frontmatter[action.propertyName] = normalizeValueForType(action.value, action.propertyType);
-      return;
-    }
-
-    if (action.operation === ACTIONS.REMOVE) {
-      delete frontmatter[action.propertyName];
-      return;
-    }
-
-    if (action.operation === ACTIONS.RENAME) {
-      frontmatter[action.newPropertyName] = frontmatter[action.propertyName];
-      delete frontmatter[action.propertyName];
-    }
+    const decisions = evaluateOperations(frontmatter, action);
+    applyOperations(frontmatter, action, decisions, emptyResult(), "frontmatter");
   }
 
   async previewAndApplyAction(action, context = null, isAuto = false) {
@@ -602,6 +626,166 @@ export default class NativePropertyOperatorPlugin extends Plugin {
 };
 
 class SkippedOperationError extends Error {}
+
+function evaluateOperations(frontmatter, action, options = {}) {
+  const operations = normalizeOperations(action);
+  const sourceNames = action.operation === ACTIONS.RENAME
+    ? new Set(operations.map((row) => row.propertyName).filter(Boolean))
+    : new Set();
+  const automatic = Boolean(options.automatic);
+  const allowOverwrite = Boolean(action.overwrite) && !automatic;
+
+  return operations.map((row) => {
+    const propertyName = row.propertyName;
+    const hasProperty = Boolean(propertyName) && Object.prototype.hasOwnProperty.call(frontmatter, propertyName);
+
+    if (!propertyName) return Object.assign({}, row, { status: "skipped", reason: "Missing property name" });
+
+    if (action.operation === ACTIONS.ADD) {
+      if (hasProperty && (!action.overwrite || automatic)) {
+        return Object.assign({}, row, { status: "skipped", reason: automatic ? "Property already exists (automatic overwrite is disabled)" : "Property already exists" });
+      }
+      return Object.assign({}, row, { status: "changed", reason: hasProperty ? "Will overwrite property value" : "Will add property" });
+    }
+
+    if (action.operation === ACTIONS.REMOVE) {
+      return Object.assign({}, row, hasProperty
+        ? { status: "changed", reason: "Will remove property" }
+        : { status: "skipped", reason: "Property does not exist" });
+    }
+
+    if (action.operation === ACTIONS.SET) {
+      if (!hasProperty && !action.addIfMissing) return Object.assign({}, row, { status: "skipped", reason: "Property does not exist" });
+      return Object.assign({}, row, { status: "changed", reason: hasProperty ? "Will change property value" : "Will add missing property" });
+    }
+
+    if (action.operation === ACTIONS.RENAME) {
+      const destination = row.newPropertyName;
+      const hasDestination = Boolean(destination) && Object.prototype.hasOwnProperty.call(frontmatter, destination);
+      if (!destination) return Object.assign({}, row, { status: "skipped", reason: "Missing new property name" });
+      if (propertyName === destination) return Object.assign({}, row, { status: "skipped", reason: "Source and destination are the same" });
+      if (!hasProperty) return Object.assign({}, row, { status: "skipped", reason: "Source property does not exist" });
+      if (hasDestination && !sourceNames.has(destination) && !allowOverwrite) {
+        return Object.assign({}, row, { status: "skipped", reason: automatic ? "Destination property already exists (automatic overwrite is disabled)" : "Destination property already exists" });
+      }
+      return Object.assign({}, row, { status: "changed", reason: hasDestination ? "Will overwrite destination property" : "Will rename property" });
+    }
+
+    if (action.operation === ACTIONS.TYPE) {
+      if (!hasProperty) return Object.assign({}, row, { status: "skipped", reason: "Property does not exist" });
+      if (!Object.values(PROPERTY_TYPES).includes(row.propertyType)) {
+        return Object.assign({}, row, { status: "skipped", reason: "Unsupported property type" });
+      }
+      const currentValue = frontmatter[propertyName];
+      if (!row.normalizeValues || isBlankPropertyValue(currentValue)) {
+        return Object.assign({}, row, { status: "changed", reason: isBlankPropertyValue(currentValue) ? "Will preserve blank/null value and change type" : "Will change native property type" });
+      }
+      const converted = convertValueToPropertyType(currentValue, row.propertyType, row);
+      if (!converted.ok) return Object.assign({}, row, { status: "incompatible", reason: converted.reason || "Value cannot be safely converted", originalValue: currentValue });
+      if (valuesEqual(currentValue, converted.value)) {
+        return Object.assign({}, row, { status: "changed", reason: "Value already matches selected type", value: converted.value, originalValue: currentValue });
+      }
+      return Object.assign({}, row, { status: "changed", reason: "Will convert value and change native property type", value: converted.value, originalValue: currentValue });
+    }
+
+    return Object.assign({}, row, { status: "skipped", reason: "Unknown operation" });
+  });
+}
+
+function applyOperations(frontmatter, action, decisions, result, path) {
+  const outcome = { changed: 0, skipped: 0, failed: 0, incompatible: 0, failedRows: [] };
+  const changedRenames = decisions.filter((item) => item.status === "changed" && action.operation === ACTIONS.RENAME);
+  const renameValues = new Map(changedRenames.map((item) => [item.propertyName, frontmatter[item.propertyName]]));
+
+  if (action.operation === ACTIONS.RENAME && changedRenames.length > 0) {
+    for (const row of changedRenames) delete frontmatter[row.propertyName];
+    for (const row of changedRenames) frontmatter[row.newPropertyName] = renameValues.get(row.propertyName);
+  }
+
+  for (const decision of decisions) {
+    if (decision.status === "changed") {
+      if (action.operation !== ACTIONS.RENAME) {
+        try {
+          mutateOperation(frontmatter, action, decision);
+        } catch (error) {
+          outcome.failed += 1;
+          outcome.failedRows.push(decision.propertyName);
+          result.operationsFailed += 1;
+          result.reasons.push(`${path}: ${decision.propertyName}: ${error && error.message ? error.message : String(error)}`);
+          recordOperationResult(result, path, decision, "failed", error && error.message ? error.message : String(error));
+          continue;
+        }
+      }
+      outcome.changed += 1;
+      result.operationsChanged += 1;
+      recordOperationResult(result, path, decision, "changed", decision.reason);
+      continue;
+    }
+
+    if (decision.status === "incompatible") {
+      outcome.skipped += 1;
+      outcome.incompatible += 1;
+      result.operationsSkipped += 1;
+      result.skippedIncompatible += 1;
+      result.reasons.push(`${path}: ${decision.propertyName}: ${decision.reason}`);
+      recordOperationResult(result, path, decision, "skipped", decision.reason);
+      continue;
+    }
+
+    outcome.skipped += 1;
+    result.operationsSkipped += 1;
+    result.reasons.push(`${path}: ${decision.propertyName || "property"}: ${decision.reason}`);
+    recordOperationResult(result, path, decision, "skipped", decision.reason);
+  }
+  return outcome;
+}
+
+function mutateOperation(frontmatter, action, row) {
+  if (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) {
+    frontmatter[row.propertyName] = normalizeValueForType(row.value, row.propertyType);
+    return;
+  }
+  if (action.operation === ACTIONS.REMOVE) {
+    delete frontmatter[row.propertyName];
+    return;
+  }
+  if (action.operation === ACTIONS.TYPE) {
+    if (row.normalizeValues && !isBlankPropertyValue(row.value)) frontmatter[row.propertyName] = row.value;
+    return;
+  }
+}
+
+function recordOperationResult(result, path, operation, status, reason) {
+  if (!Array.isArray(result.operationResults)) result.operationResults = [];
+  result.operationResults.push({
+    path,
+    propertyName: operation.propertyName || "",
+    status,
+    reason
+  });
+}
+
+function summarizeOperationDecisions(decisions) {
+  if (!decisions || decisions.length === 0) return "No property operations configured";
+  const changed = decisions.filter((item) => item.status === "changed").length;
+  const incompatible = decisions.filter((item) => item.status === "incompatible").length;
+  const skipped = decisions.filter((item) => item.status === "skipped").length;
+  const parts = [];
+  if (changed) parts.push(`${changed} change${changed === 1 ? "" : "s"}`);
+  if (skipped) parts.push(`${skipped} skipped`);
+  if (incompatible) parts.push(`${incompatible} incompatible`);
+  return parts.join(", ");
+}
+
+function uniqueTypeOperations(operations) {
+  const seen = new Set();
+  return (operations || []).filter((row) => {
+    const key = `${row.propertyName}:${row.propertyType}`;
+    if (!row.propertyName || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 class NativePropertyOperatorSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -1314,20 +1498,13 @@ class ActionEditorModal extends Modal {
       .addDropdown((dropdown) => {
         for (const [value, label] of Object.entries(ACTION_LABELS)) dropdown.addOption(value, label);
         dropdown.setValue(this.action.operation).onChange((value) => {
+          this.action.operations = convertOperationsForOperation(this.action.operations, this.action.operation, value);
           this.action.operation = value;
           this.render();
         });
       });
 
-    this.addPropertyPicker(contentEl, "Property", "propertyName");
-
-    if (this.action.operation === ACTIONS.RENAME) {
-      this.addPropertyPicker(contentEl, "New property", "newPropertyName", true);
-    }
-
-    if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET) {
-      this.addValueEditor(contentEl);
-    }
+    this.addOperationEditor(contentEl);
 
     if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.RENAME) {
       new Setting(contentEl)
@@ -1362,6 +1539,129 @@ class ActionEditorModal extends Modal {
           new Notice(`Could not save action: ${error && error.message ? error.message : String(error)}`);
         }
       }));
+  }
+
+  addOperationEditor(contentEl) {
+    const fieldEl = this.createVerticalField(
+      contentEl,
+      ACTION_LABELS[this.action.operation],
+      "Configure one or more typed property operations. Each row is applied independently within the target note transaction."
+    );
+    const operations = this.action.operations || (this.action.operations = [defaultOperation(this.action.operation)]);
+    if (operations.length === 0) fieldEl.createDiv({ text: "No operation rows. Add at least one row before saving." });
+
+    const candidates = this.plugin.buildPropertyCandidates(this.plugin.resolveTargetFiles(this.action, this.context));
+    for (const [index, row] of operations.entries()) {
+      const rowEl = fieldEl.createDiv({ cls: "npo-operation-row" });
+      rowEl.addClass("native-property-operator-style-087");
+      rowEl.addClass("native-property-operator-style-088");
+      rowEl.createSpan({ text: `Operation ${index + 1}` });
+
+      const sourceInput = this.createFullWidthInput(rowEl, row.propertyName || "");
+      sourceInput.placeholder = this.action.operation === ACTIONS.RENAME ? "Old property name" : "Property name";
+      sourceInput.addEventListener("input", () => {
+        row.propertyName = sourceInput.value.trim();
+        if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
+          row.propertyType = this.plugin.getPropertyType(row.propertyName, row.propertyType || PROPERTY_TYPES.TEXT);
+        }
+      });
+      new PropertyInputSuggest(sourceInput, candidates, (candidate) => {
+        row.propertyName = candidate.name;
+        if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
+          row.propertyType = this.plugin.getPropertyType(candidate.name, row.propertyType || PROPERTY_TYPES.TEXT);
+        }
+        this.render();
+      });
+
+      if (this.action.operation === ACTIONS.RENAME) {
+        const destinationInput = this.createFullWidthInput(rowEl, row.newPropertyName || "");
+        destinationInput.placeholder = "New property name";
+        destinationInput.addEventListener("input", () => {
+          row.newPropertyName = destinationInput.value.trim();
+        });
+      }
+
+      if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET || this.action.operation === ACTIONS.TYPE) {
+        const typeSetting = new Setting(rowEl).setName(this.action.operation === ACTIONS.TYPE ? "Target type" : "Type");
+        typeSetting.addDropdown((dropdown) => {
+          for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
+          dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
+            row.propertyType = value;
+            this.render();
+          });
+        });
+        if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(rowEl, row);
+        else this.addTypeConversionOptions(rowEl, row);
+      }
+
+      this.createSmallButton(rowEl, "Remove row", () => {
+        this.action.operations.splice(index, 1);
+        this.render();
+      });
+    }
+
+    this.createSmallButton(fieldEl, "Add operation row", () => {
+      this.action.operations.push(defaultOperation(this.action.operation));
+      this.render();
+    });
+  }
+
+  addOperationValueEditor(containerEl, row) {
+    const type = row.propertyType || PROPERTY_TYPES.TEXT;
+    if (type === PROPERTY_TYPES.CHECKBOX) {
+      new Setting(containerEl)
+        .setName("Value")
+        .addToggle((toggle) => toggle.setValue(row.value === true || row.value === "true").onChange((value) => {
+          row.value = value;
+        }));
+      return;
+    }
+    if (type === PROPERTY_TYPES.LIST || type === PROPERTY_TYPES.TAGS) {
+      new Setting(containerEl)
+        .setName("Value")
+        .setDesc("Comma-separated values.")
+        .addTextArea((text) => text.setValue(Array.isArray(row.value) ? row.value.join(", ") : String(row.value || "")).onChange((value) => {
+          row.value = value;
+        }));
+      return;
+    }
+    new Setting(containerEl)
+      .setName(`Value (${type})`)
+      .addText((text) => {
+        text.setValue(String(row.value == null ? "" : row.value)).onChange((value) => {
+          row.value = value;
+        });
+        if (type === PROPERTY_TYPES.NUMBER) text.inputEl.type = "number";
+        if (type === PROPERTY_TYPES.DATE) text.inputEl.type = "date";
+        if (type === PROPERTY_TYPES.DATETIME) text.inputEl.type = "datetime-local";
+      });
+  }
+
+  addTypeConversionOptions(containerEl, row) {
+    new Setting(containerEl)
+      .setName("Convert existing values")
+      .setDesc("Unsafe values are preserved and reported as incompatible.")
+      .addToggle((toggle) => toggle.setValue(row.normalizeValues !== false).onChange((value) => {
+        row.normalizeValues = value;
+      }));
+    if (row.propertyType === PROPERTY_TYPES.DATE) {
+      new Setting(containerEl)
+        .setName("Source date format")
+        .addDropdown((dropdown) => dropdown
+          .addOption("auto", "Auto: unambiguous ISO only")
+          .addOption("ymd", "YYYY-MM-DD")
+          .addOption("dmy", "DD/MM/YYYY")
+          .addOption("mdy", "MM/DD/YYYY")
+          .setValue(row.dateSourceFormat || "auto")
+          .onChange((value) => { row.dateSourceFormat = value; }));
+    }
+    if (row.propertyType === PROPERTY_TYPES.DATETIME) {
+      new Setting(containerEl)
+        .setName("Date-only values to midnight")
+        .addToggle((toggle) => toggle.setValue(Boolean(row.dateOnlyToMidnight)).onChange((value) => {
+          row.dateOnlyToMidnight = value;
+        }));
+    }
   }
 
   addManualTargetSetting(contentEl) {
@@ -1732,9 +2032,8 @@ class PreviewModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: `Preview: ${this.action.name}` });
 
-    const changed = this.previewEntries.filter((entry) => entry.status === "changed").length;
-    const skipped = this.previewEntries.filter((entry) => entry.status === "skipped").length;
-    contentEl.createEl("p", { text: `Changed if applied: ${changed}. Skipped: ${skipped}. Failed: 0.` });
+    const counts = summarizeActionPreview(this.previewEntries);
+    contentEl.createEl("p", { text: `Files: ${counts.filesChanged} changed, ${counts.filesSkipped} skipped, ${counts.filesFailed} failed. Operations: ${counts.changed} changed, ${counts.skipped} skipped, ${counts.incompatible} incompatible, ${counts.failed} failed.` });
 
     const list = contentEl.createEl("ul");
     for (const entry of this.previewEntries.slice(0, 30)) {
@@ -1748,24 +2047,32 @@ class PreviewModal extends Modal {
   }
 
   async apply() {
-    const changed = this.previewEntries.filter((entry) => entry.status === "changed").length;
-    if (changed === 0) {
+    const counts = summarizeActionPreview(this.previewEntries);
+    const hasTypeSync = this.action.operation === ACTIONS.TYPE && normalizeOperations(this.action).length > 0;
+    if (counts.changed === 0 && counts.incompatible === 0 && !hasTypeSync) {
       new Notice("Preview has no changes to apply.");
       return;
     }
 
-    const multiFile = this.previewEntries.length > 1 || (this.context && this.context.requiresConfirm);
+    const multiFile = counts.changed > 0 && (this.previewEntries.length > 1 || (this.context && this.context.requiresConfirm));
     if (multiFile) {
-      const confirmed = await confirmModal(this.app, "Apply multiple-file operation?", `This will modify ${changed} Markdown note(s).`);
+      const confirmed = await confirmModal(this.app, "Apply multiple-file operation?", `This will modify ${counts.changed} property operation(s) across the selected notes.`);
       if (!confirmed) return;
     }
 
-    if (this.action.overwrite && this.plugin.settings.confirmOverwrite) {
+    let allowIncompatibleTypeChange = false;
+    if (counts.incompatible > 0 && this.action.operation === ACTIONS.TYPE && !this.action.trigger) {
+      const confirmedIncompatible = await confirmModal(this.app, "Preserve incompatible values and change type?", `${counts.incompatible} value(s) cannot be safely converted. Compatible values will be converted, incompatible values will be preserved, and native types will be synchronized.`);
+      if (!confirmedIncompatible) return;
+      allowIncompatibleTypeChange = true;
+    }
+
+    if (this.action.overwrite && !this.action.trigger && this.plugin.settings.confirmOverwrite) {
       const confirmedOverwrite = await confirmModal(this.app, "Confirm overwrite", "Overwrite is enabled. Existing property values may be replaced.");
       if (!confirmedOverwrite) return;
     }
 
-    const result = await this.plugin.applyAction(this.action, this.previewEntries);
+    const result = await this.plugin.applyAction(this.action, this.previewEntries, { allowIncompatibleTypeChange });
     this.action.lastResult = result;
     this.action.lastResultAt = new Date().toISOString();
     if (this.context && this.context.isInitialSync) {
@@ -2108,16 +2415,28 @@ function initialSyncPrompt(app) {
 
 function normalizeSettings(settings) {
   const source = settings || {};
-  const normalized = {
+  const normalized = Object.assign({}, source, {
     properties: normalizeProperties(source.properties || migrateProperties(source.propertyNames || [])),
-    manualActions: (source.manualActions || migrateActions(source.savedActions || [], "manual")).map(normalizeAction),
-    autoActions: (source.autoActions || migrateActions(source.folderRules || [], "auto")).map(normalizeAction),
+    manualActions: (source.manualActions || migrateActions(source.savedActions || [], "manual")).map((action) => normalizeAction(action, "manual")),
+    autoActions: (source.autoActions || migrateActions(source.folderRules || [], "auto")).map((action) => normalizeAction(action, "auto")),
     excludedFolders: uniqueStrings((source.excludedFolders || []).map(normalizePathInput).filter(Boolean)),
     addMissingOnly: source.addMissingOnly !== false,
     confirmOverwrite: source.confirmOverwrite !== false,
     suggestLimit: Number.isInteger(source.suggestLimit) && source.suggestLimit > 0 ? source.suggestLimit : 12
-  };
+  });
+  delete normalized.propertyNames;
+  delete normalized.savedActions;
+  delete normalized.folderRules;
   return normalized;
+}
+
+function needsActionMigration(settings) {
+  const source = settings || {};
+  if (source.propertyNames || source.savedActions || source.folderRules) return true;
+  return [source.manualActions, source.autoActions].some((actions) => (actions || []).some((action) => {
+    if (!Array.isArray(action.operations)) return true;
+    return ["propertyName", "newPropertyName", "propertyType", "value", "valueType"].some((field) => Object.prototype.hasOwnProperty.call(action, field));
+  }));
 }
 
 function migrateProperties(propertyNames) {
@@ -2150,20 +2469,20 @@ function normalizeProperty(property) {
 
 function migrateActions(actions, kind) {
   return (actions || []).map((action) => {
-    const migrated = createEmptyAction(kind);
-    migrated.name = action.name || "";
+    const migrated = Object.assign(createEmptyAction(kind), action || {});
     migrated.operation = action.operation || action.action || ACTIONS.ADD;
-    migrated.targetType = action.target || TARGETS.CURRENT_FILE;
+    migrated.targetType = action.targetType || action.target || TARGETS.CURRENT_FILE;
     migrated.propertyName = action.propertyName || "";
     migrated.newPropertyName = action.newPropertyName || "";
     migrated.value = action.value == null ? "" : action.value;
-    migrated.propertyType = oldValueTypeToPropertyType(action.valueType);
+    migrated.propertyType = action.propertyType || oldValueTypeToPropertyType(action.valueType);
     migrated.overwrite = Boolean(action.overwrite);
     migrated.targetFolder = normalizeFolderPath(action.folderPath || action.targetFolder || "/");
     migrated.targetPath = String(action.targetPath || "").trim();
     migrated.targets = normalizeTargets(action.targets || singleTargetFromLegacy(migrated));
     migrated.autoTargets = normalizeAutoTargets(action.autoTargets || autoTargetFromLegacy(migrated));
-    if (kind === "auto") migrated.enabled = false;
+    migrated.operations = Array.isArray(action.operations) ? action.operations : null;
+    if (kind === "auto" && !migrated.trigger) migrated.trigger = AUTO_TRIGGER;
     return migrated;
   });
 }
@@ -2180,6 +2499,7 @@ function createEmptyAction(kind) {
     targetPath: "",
     targets: [],
     autoTargets: [],
+    operations: [defaultOperation(ACTIONS.ADD)],
     propertyName: "",
     newPropertyName: "",
     propertyType: PROPERTY_TYPES.TEXT,
@@ -2194,11 +2514,12 @@ function createEmptyAction(kind) {
   };
 }
 
-function normalizeAction(action) {
-  const base = Object.assign(createEmptyAction(action && action.trigger ? "auto" : "manual"), action || {});
+function normalizeAction(action, explicitKind = null) {
+  const kind = explicitKind || (action && action.trigger ? "auto" : "manual");
+  const base = Object.assign(createEmptyAction(kind), action || {});
   base.id = base.id || createId();
   base.name = String(base.name || "").trim();
-  base.operation = Object.values(ACTIONS).includes(base.operation) ? base.operation : ACTIONS.ADD;
+  base.operation = normalizeOperationName(action && (action.operation || action.action) || base.operation);
   base.targetType = Object.values(TARGETS).includes(base.targetType) ? base.targetType : TARGETS.CURRENT_FILE;
   base.targetFolder = normalizeFolderPath(base.targetFolder || "/");
   base.targetPath = String(base.targetPath || "").trim();
@@ -2208,13 +2529,11 @@ function normalizeAction(action) {
   const incomingAutoTargets = hasAutoTargets ? action.autoTargets : autoTargetFromLegacy(action || {});
   base.autoTargets = normalizeAutoTargets(incomingAutoTargets);
   if (!base.trigger && base.targets.length > 0) base.targetType = TARGETS.SPECIFIC_TARGETS;
-  base.propertyName = String(base.propertyName || "").trim();
-  base.newPropertyName = String(base.newPropertyName || "").trim();
-  base.propertyType = Object.values(PROPERTY_TYPES).includes(base.propertyType) ? base.propertyType : PROPERTY_TYPES.TEXT;
+  base.operations = Array.isArray(action && action.operations) ? action.operations : null;
+  base.operations = normalizeOperations(base);
   base.overwrite = Boolean(base.overwrite);
   base.addIfMissing = Boolean(base.addIfMissing);
-  if (base.operation === ACTIONS.ADD && base.overwrite == null) base.overwrite = false;
-  if (base.trigger) {
+  if (kind === "auto" || base.trigger) {
     base.trigger = AUTO_TRIGGER;
     base.enabled = Boolean(base.enabled);
     base.targets = [];
@@ -2224,7 +2543,107 @@ function normalizeAction(action) {
     delete base.lastRunKey;
     delete base.autoTargets;
   }
+  delete base.propertyName;
+  delete base.newPropertyName;
+  delete base.propertyType;
+  delete base.value;
+  delete base.valueType;
+  delete base.action;
   return base;
+}
+
+function normalizeOperationName(operation) {
+  if (operation === "change-type" || operation === "changeType" || operation === "type-change") return ACTIONS.TYPE;
+  return Object.values(ACTIONS).includes(operation) ? operation : ACTIONS.ADD;
+}
+
+function defaultOperation(operation) {
+  if (operation === ACTIONS.REMOVE) return { propertyName: "" };
+  if (operation === ACTIONS.RENAME) return { propertyName: "", newPropertyName: "" };
+  if (operation === ACTIONS.TYPE) return {
+    propertyName: "",
+    propertyType: PROPERTY_TYPES.TEXT,
+    normalizeValues: true,
+    dateSourceFormat: "auto",
+    dateOnlyToMidnight: false
+  };
+  return { propertyName: "", propertyType: PROPERTY_TYPES.TEXT, value: "" };
+}
+
+function convertOperationsForOperation(rows, fromOperation, toOperation) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  if (fromOperation === toOperation) return sourceRows;
+  if (toOperation === ACTIONS.REMOVE) {
+    return sourceRows.map((row) => ({ propertyName: String(row.propertyName || "").trim() }));
+  }
+  if (toOperation === ACTIONS.RENAME) {
+    if (fromOperation === ACTIONS.RENAME) {
+      return sourceRows.map((row) => ({
+        propertyName: String(row.propertyName || "").trim(),
+        newPropertyName: String(row.newPropertyName || "").trim()
+      }));
+    }
+    return [defaultOperation(ACTIONS.RENAME)];
+  }
+  if (toOperation === ACTIONS.TYPE) {
+    if (fromOperation === ACTIONS.TYPE) return sourceRows.map((row) => Object.assign({}, defaultOperation(ACTIONS.TYPE), row));
+    return [defaultOperation(ACTIONS.TYPE)];
+  }
+  if ((toOperation === ACTIONS.ADD || toOperation === ACTIONS.SET) && (fromOperation === ACTIONS.ADD || fromOperation === ACTIONS.SET)) {
+    return sourceRows.map((row) => ({
+      propertyName: String(row.propertyName || "").trim(),
+      propertyType: Object.values(PROPERTY_TYPES).includes(row.propertyType) ? row.propertyType : PROPERTY_TYPES.TEXT,
+      value: row.value == null ? "" : row.value
+    }));
+  }
+  return [defaultOperation(toOperation)];
+}
+
+function normalizeOperations(action) {
+  const operation = normalizeOperationName(action && action.operation);
+  let incoming = Array.isArray(action && action.operations) ? action.operations : null;
+  if (!incoming) {
+    if (operation === ACTIONS.RENAME) {
+      incoming = [{ propertyName: action && action.propertyName, newPropertyName: action && action.newPropertyName }];
+    } else if (operation === ACTIONS.REMOVE) {
+      incoming = [{ propertyName: action && action.propertyName }];
+    } else if (operation === ACTIONS.TYPE) {
+      incoming = [{
+        propertyName: action && action.propertyName,
+        propertyType: action && action.propertyType,
+        normalizeValues: action && action.normalizeValues,
+        dateSourceFormat: action && action.dateSourceFormat,
+        dateOnlyToMidnight: action && action.dateOnlyToMidnight
+      }];
+    } else {
+      incoming = [{
+        propertyName: action && action.propertyName,
+        propertyType: action && action.propertyType,
+        value: action && action.value
+      }];
+    }
+  }
+
+  return incoming.map((row) => {
+    const source = row || {};
+    if (operation === ACTIONS.REMOVE) return { propertyName: String(source.propertyName || source.name || "").trim() };
+    if (operation === ACTIONS.RENAME) return {
+      propertyName: String(source.propertyName || source.oldName || source.name || "").trim(),
+      newPropertyName: String(source.newPropertyName || source.newName || source.destination || "").trim()
+    };
+    if (operation === ACTIONS.TYPE) return {
+      propertyName: String(source.propertyName || source.name || source.oldName || "").trim(),
+      propertyType: Object.values(PROPERTY_TYPES).includes(source.propertyType || source.newType) ? (source.propertyType || source.newType) : PROPERTY_TYPES.TEXT,
+      normalizeValues: source.normalizeValues !== false,
+      dateSourceFormat: ["auto", "ymd", "dmy", "mdy"].includes(source.dateSourceFormat) ? source.dateSourceFormat : "auto",
+      dateOnlyToMidnight: Boolean(source.dateOnlyToMidnight)
+    };
+    return {
+      propertyName: String(source.propertyName || source.name || "").trim(),
+      propertyType: Object.values(PROPERTY_TYPES).includes(source.propertyType || source.type) ? (source.propertyType || source.type) : PROPERTY_TYPES.TEXT,
+      value: source.value == null ? "" : source.value
+    };
+  });
 }
 
 function singleTargetFromLegacy(action) {
@@ -2286,23 +2705,60 @@ function uniqueAutoTargets(targets) {
 
 function validateAction(action, kind) {
   if (!action.name) return "Action name is required.";
-  if (!action.propertyName) return "Property is required.";
-  if (action.operation === ACTIONS.RENAME && !action.newPropertyName) return "New property is required.";
-  if ((action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) && action.propertyType === PROPERTY_TYPES.NUMBER) {
-    if (String(action.value == null ? "" : action.value).trim() && !Number.isFinite(Number(action.value))) return "Number value is invalid.";
+  const operations = normalizeOperations(action);
+  if (operations.length === 0) return "Add at least one property operation.";
+  const names = new Set();
+  for (const row of operations) {
+    if (!row.propertyName) return "Every operation row needs a property name.";
+    if (names.has(row.propertyName)) return `Property is configured more than once: ${row.propertyName}.`;
+    names.add(row.propertyName);
+    if (action.operation === ACTIONS.RENAME && !row.newPropertyName) return "Every rename row needs a new property name.";
+    if (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) {
+      const valueError = validateOperationValue(row);
+      if (valueError) return `${valueError} for ${row.propertyName}.`;
+    }
   }
-  if ((action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) && action.propertyType === PROPERTY_TYPES.DATE) {
-    const value = String(action.value == null ? "" : action.value).trim();
-    if (value && !isValidDateInput(value)) return "Date value must use YYYY-MM-DD.";
-  }
-  if ((action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) && action.propertyType === PROPERTY_TYPES.DATETIME) {
-    const value = String(action.value == null ? "" : action.value).trim();
-    if (value && !isValidDateTimeInput(value)) return "Date & time value must use the native date-time format.";
+  if (action.operation === ACTIONS.RENAME) {
+    const destinations = new Set();
+    const mapping = new Map();
+    for (const row of operations) {
+      if (row.propertyName === row.newPropertyName) return "A rename source and destination cannot be the same.";
+      if (destinations.has(row.newPropertyName)) return `Duplicate rename destination: ${row.newPropertyName}.`;
+      destinations.add(row.newPropertyName);
+      mapping.set(row.propertyName, row.newPropertyName);
+    }
+    for (const source of mapping.keys()) {
+      const seen = new Set();
+      let current = source;
+      while (mapping.has(current)) {
+        if (seen.has(current)) return "Rename mappings contain a cycle.";
+        seen.add(current);
+        current = mapping.get(current);
+      }
+    }
   }
   if (kind === "auto" && (!action.autoTargets || action.autoTargets.length === 0)) return "Add at least one target folder.";
   if (kind !== "auto" && action.targetType === TARGETS.SPECIFIC_TARGETS && (!action.targets || action.targets.length === 0)) {
     return "Add at least one target.";
   }
+  return "";
+}
+
+function validateOperationValue(row) {
+  const value = row.value;
+  const text = String(value == null ? "" : value).trim();
+  if (row.propertyType === PROPERTY_TYPES.NUMBER && text && !Number.isFinite(Number(value))) return "Number value is invalid";
+  if (row.propertyType === PROPERTY_TYPES.CHECKBOX && text && value !== true && value !== false && value !== "true" && value !== "false") return "Checkbox value must be true or false";
+  if (row.propertyType === PROPERTY_TYPES.LIST) {
+    if (value != null && !Array.isArray(value) && typeof value !== "string") return "List value must be an array or comma-separated text";
+    if (Array.isArray(value) && value.some((item) => typeof item !== "string")) return "List entries must be text";
+  }
+  if (row.propertyType === PROPERTY_TYPES.TAGS) {
+    if (Array.isArray(value) && value.some((item) => typeof item !== "string" || /\s/.test(item.trim()))) return "Tag entries must not contain whitespace";
+    if (!Array.isArray(value) && text && !text.includes(",") && /\s/.test(text)) return "Tags must be comma-separated or single tags";
+  }
+  if (row.propertyType === PROPERTY_TYPES.DATE && text && !isValidDateInput(text)) return "Date value is invalid";
+  if (row.propertyType === PROPERTY_TYPES.DATETIME && text && !isValidDateTimeInput(text)) return "Date & time value is invalid";
   return "";
 }
 
@@ -2328,19 +2784,53 @@ function oldValueTypeToPropertyType(valueType) {
 
 function emptyResult() {
   return {
+    // Legacy top-level counters remain file-level. Operation-level counters are explicit below.
     changed: 0,
     unchanged: 0,
     blank: 0,
     skippedIncompatible: 0,
     skipped: 0,
     failed: 0,
-    reasons: []
+    filesChanged: 0,
+    filesSkipped: 0,
+    filesFailed: 0,
+    operationsChanged: 0,
+    operationsSkipped: 0,
+    operationsFailed: 0,
+    registrySkipped: 0,
+    registryFailed: 0,
+    reasons: [],
+    operationResults: []
   };
 }
 
 function displayResult(result) {
   if (!result) return "No result yet";
-  return `Changed: ${result.changed || 0}. Unchanged: ${result.unchanged || 0}. Blank preserved: ${result.blank || 0}. Skipped incompatible: ${result.skippedIncompatible || 0}. Skipped: ${result.skipped || 0}. Failed: ${result.failed || 0}.`;
+  const filesChanged = result.filesChanged == null ? result.changed || 0 : result.filesChanged;
+  const filesSkipped = result.filesSkipped == null ? result.skipped || 0 : result.filesSkipped;
+  const filesFailed = result.filesFailed == null ? result.failed || 0 : result.filesFailed;
+  const operationsChanged = result.operationsChanged == null ? result.changed || 0 : result.operationsChanged;
+  const operationsSkipped = result.operationsSkipped == null ? result.skipped || 0 : result.operationsSkipped;
+  const operationsFailed = result.operationsFailed == null ? result.failed || 0 : result.operationsFailed;
+  return `Files — changed: ${filesChanged}, skipped: ${filesSkipped}, failed: ${filesFailed}. Operations — changed: ${operationsChanged}, skipped: ${operationsSkipped}, failed: ${operationsFailed}. Incompatible: ${result.skippedIncompatible || 0}. Native type sync — skipped: ${result.registrySkipped || 0}, failed: ${result.registryFailed || 0}.`;
+}
+
+function summarizeActionPreview(entries) {
+  const counts = { changed: 0, skipped: 0, incompatible: 0, failed: 0, filesChanged: 0, filesSkipped: 0, filesFailed: 0 };
+  for (const entry of entries || []) {
+    let fileChanged = false;
+    let fileFailed = false;
+    for (const operation of entry.operations || []) {
+      if (operation.status === "changed") { counts.changed += 1; fileChanged = true; }
+      else if (operation.status === "incompatible") counts.incompatible += 1;
+      else if (operation.status === "failed") { counts.failed += 1; fileFailed = true; }
+      else counts.skipped += 1;
+    }
+    if (fileChanged) counts.filesChanged += 1;
+    if (fileFailed) counts.filesFailed += 1;
+    if (!fileChanged && !fileFailed) counts.filesSkipped += 1;
+  }
+  return counts;
 }
 
 function displayInitialSyncResult(action) {
@@ -2349,11 +2839,13 @@ function displayInitialSyncResult(action) {
 }
 
 function describeAction(action) {
-  const property = action.propertyName || "no property";
-  if (action.operation === ACTIONS.RENAME) return `Rename ${property} to ${action.newPropertyName || "no property"}`;
-  if (action.operation === ACTIONS.REMOVE) return `Remove ${property}`;
-  if (action.operation === ACTIONS.SET) return `Set/change ${property}`;
-  return `Add ${property}`;
+  const operations = normalizeOperations(action);
+  const count = operations.length;
+  if (action.operation === ACTIONS.RENAME) return `Rename ${count} propert${count === 1 ? "y" : "ies"}`;
+  if (action.operation === ACTIONS.REMOVE) return `Remove ${count} propert${count === 1 ? "y" : "ies"}`;
+  if (action.operation === ACTIONS.SET) return `Set/change ${count} propert${count === 1 ? "y" : "ies"}`;
+  if (action.operation === ACTIONS.TYPE) return `Change type for ${count} propert${count === 1 ? "y" : "ies"}`;
+  return `Add ${count} propert${count === 1 ? "y" : "ies"}`;
 }
 
 function displayTarget(action) {
@@ -2756,3 +3248,17 @@ function uniqueStrings(values) {
 function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+export {
+  ACTIONS,
+  PROPERTY_TYPES,
+  TARGETS,
+  applyOperations,
+  createEmptyAction,
+  emptyResult,
+  evaluateOperations,
+  normalizeAction,
+  normalizeSettings,
+  normalizeOperations,
+  validateAction
+};
