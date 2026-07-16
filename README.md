@@ -47,6 +47,8 @@ Saved manual actions can target the current file, the current folder, or specifi
 
 Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
 
+The manual and automatic action editors display each operation as an ordered property card. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards.
+
 Before applying a manual action, the plugin shows a preview with changed and skipped notes. Applying multiple files asks for confirmation. If overwrite is enabled and overwrite confirmation is on, the plugin asks for an additional confirmation.
 
 ## Auto actions
@@ -67,6 +69,7 @@ Download the release assets from GitHub and place them in your vault under `.obs
 
 - `main.js`
 - `manifest.json`
+- `styles.css`
 
 Then enable the plugin in Obsidian settings.
 
@@ -80,6 +83,18 @@ npm run build
 ```
 
 The production build writes `main.js`.
+
+### Manual action-editor smoke test
+
+- Open a new manual Add property action and confirm one clean **Property 1** card.
+- Enter a property name, type, and value; choose **Add property** and confirm **Property 2** appears below it.
+- Remove Property 1 and confirm the remaining card renumbers cleanly without losing its values.
+- Confirm **Overwrite existing values** remains below the complete card list; save, reopen, and verify both row order and values persist.
+- Repeat the card/add/remove flow for Remove, Set/change value, Rename, and Change type actions.
+- Repeat in the automatic action editor and confirm target folders, recursive controls, and action-level options remain outside property cards.
+- At a narrow modal width, verify headers wrap, fields stack, dropdowns remain visible, and no Value or Remove controls overlap.
+- Check long property names, List and Tags textareas, Date and Date & time controls, and selected folder/file target rows.
+- Confirm the final operation card is fully visible above the dedicated Cancel/Save footer and invalid actions remain blocked from saving.
 
 ## License
 

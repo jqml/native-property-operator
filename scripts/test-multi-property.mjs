@@ -31,6 +31,8 @@ const {
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
+  buildOperationEditorModel,
+  convertOperationsForOperation,
   emptyResult,
   evaluateOperations,
   normalizeAction,
@@ -240,7 +242,38 @@ const automaticRename = action(ACTIONS.RENAME, [{ propertyName: "old", newProper
 assert.equal(run(automaticRenameFrontmatter, automaticRename).result.operationsSkipped, 1);
 assert.equal(automaticRenameFrontmatter.destination, "keep");
 
+const oneCardModel = buildOperationEditorModel(ACTIONS.ADD, [
+  { propertyName: "one", propertyType: PROPERTY_TYPES.TEXT, value: "a" }
+]);
+assert.equal(oneCardModel.cards.length, 1, "one operation renders one card model");
+assert.equal(oneCardModel.cards[0].title, "Property 1");
+assert.deepEqual(oneCardModel.cards[0].fields, ["Property", "Type", "Value"]);
+assert.equal(oneCardModel.addButtonLabel, "Add property");
+
+const orderedRows = [{ propertyName: "first" }, { propertyName: "second" }];
+const twoCardModel = buildOperationEditorModel(ACTIONS.REMOVE, orderedRows);
+assert.equal(twoCardModel.cards.length, 2, "two operations render two card models");
+assert.deepEqual(twoCardModel.cards.map((card) => card.title), ["Property 1", "Property 2"]);
+assert.equal(twoCardModel.cards[0].row, orderedRows[0], "card keeps the matching operation row");
+assert.equal(twoCardModel.cards[1].row, orderedRows[1], "operation order remains stable");
+assert.equal(twoCardModel.addButtonLabel, "Add property to remove");
+
+assert.equal(buildOperationEditorModel(ACTIONS.SET, []).addButtonLabel, "Add property value");
+assert.equal(buildOperationEditorModel(ACTIONS.RENAME, []).addButtonLabel, "Add rename");
+assert.equal(buildOperationEditorModel(ACTIONS.TYPE, []).addButtonLabel, "Add type change");
+assert.deepEqual(buildOperationEditorModel(ACTIONS.RENAME, [{ propertyName: "old", newPropertyName: "new" }]).cards[0].fields, ["Existing property", "New property name"]);
+assert.deepEqual(buildOperationEditorModel(ACTIONS.TYPE, [{ propertyName: "date", propertyType: PROPERTY_TYPES.DATE }]).cards[0].fields, ["Property", "Target type", "Convert existing values", "Source date format"]);
+assert.deepEqual(buildOperationEditorModel(ACTIONS.TYPE, [{ propertyName: "date-time", propertyType: PROPERTY_TYPES.DATETIME }]).cards[0].fields, ["Property", "Target type", "Convert existing values", "Date-only values to midnight"]);
+
+const switchedToRename = convertOperationsForOperation(orderedRows, ACTIONS.REMOVE, ACTIONS.RENAME);
+assert.deepEqual(buildOperationEditorModel(ACTIONS.RENAME, switchedToRename).cards[0].fields, ["Existing property", "New property name"], "switching action type creates rename fields");
+const switchedToSet = convertOperationsForOperation([
+  { propertyName: "kept", propertyType: PROPERTY_TYPES.NUMBER, value: "2" }
+], ACTIONS.ADD, ACTIONS.SET);
+assert.deepEqual(buildOperationEditorModel(ACTIONS.SET, switchedToSet).cards[0].fields, ["Property", "Type", "Value"], "switching action type creates value fields");
+
 const source = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 assert.match(source, /vault\.on\("create"/);
 assert.match(source, /vault\.on\("rename"/);
 assert.doesNotMatch(source, /vault\.on\("modify"/);
@@ -249,3 +282,20 @@ assert.match(source, /eventName === "create"/);
 assert.match(source, /eventName === "rename"/);
 assert.match(source, /autoRunKeys/);
 assert.match(source, /lastRunKey/);
+const operationEditorSource = source.slice(source.indexOf("  addOperationEditor(contentEl) {"), source.indexOf("  addOperationValueEditor(containerEl, row) {"));
+assert.ok(operationEditorSource.indexOf('cls: "npo-operation-list"') < operationEditorSource.indexOf('cls: "npo-operation-add-button"'), "add button renders after the operation list");
+assert.match(operationEditorSource, /for \(const card of editorModel\.cards\)/, "one card is constructed for each ordered operation model");
+assert.ok(operationEditorSource.indexOf('cls: "npo-operation-card-header"') < operationEditorSource.indexOf('"Remove"'), "Remove button belongs to the card header");
+assert.match(operationEditorSource, /text: "No properties configured\."/, "empty operation list has a clean empty state");
+assert.doesNotMatch(operationEditorSource, /Add operation row/);
+const renderSource = source.slice(source.indexOf("  render() {", source.indexOf("class ActionEditorModal")), source.indexOf("  addOperationEditor(contentEl) {"));
+assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Overwrite existing values")'), "action-level overwrite setting renders after the property list");
+assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Add if missing")'), "action-level add-if-missing setting renders after the property list");
+const targetEditorSource = source.slice(source.indexOf("  addManualTargetSetting(contentEl) {"), source.indexOf("  addFileTargetSetting(contentEl) {"));
+assert.doesNotMatch(targetEditorSource, /npo-operation-/, "operation-card styles do not leak into target controls");
+assert.doesNotMatch(styles, /\.npo-operation-row\s*\{/);
+assert.doesNotMatch(source, /cls: "npo-operation-row"/);
+assert.match(styles, /\.npo-operation-card-header\s*\{[\s\S]*?display: flex;/);
+const cardFieldRules = Array.from(styles.matchAll(/\.npo-operation-card-fields\s*\{([^}]*)\}/g));
+assert.ok(cardFieldRules.length > 0);
+assert.ok(cardFieldRules.every((match) => !/display:\s*flex/.test(match[1])), "operation field containers never flatten nested Setting rows");

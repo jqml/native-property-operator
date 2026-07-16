@@ -59,6 +59,14 @@ const ACTION_LABELS = {
   [ACTIONS.TYPE]: "Change property type"
 };
 
+const OPERATION_ADD_BUTTON_LABELS = {
+  [ACTIONS.ADD]: "Add property",
+  [ACTIONS.REMOVE]: "Add property to remove",
+  [ACTIONS.RENAME]: "Add rename",
+  [ACTIONS.SET]: "Add property value",
+  [ACTIONS.TYPE]: "Add type change"
+};
+
 const TARGET_LABELS = {
   [TARGETS.CURRENT_FILE]: "Current file",
   [TARGETS.CURRENT_FOLDER]: "Current folder",
@@ -1454,6 +1462,7 @@ class ActionEditorModal extends Modal {
     this.plugin = plugin;
     this.kind = kind;
     this.context = context;
+    this.pendingOperationFocusIndex = null;
     this.action = normalizeAction(action || createEmptyAction(kind));
     if (!action && this.action.operation === ACTIONS.ADD) {
       this.action.overwrite = !this.plugin.settings.addMissingOnly;
@@ -1473,7 +1482,7 @@ class ActionEditorModal extends Modal {
   render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass("native-property-operator-style-047");
+    contentEl.addClass("npo-action-editor-content");
     contentEl.createEl("h2", { text: this.kind === "auto" ? "Auto action" : "Manual action" });
 
     new Setting(contentEl)
@@ -1524,7 +1533,8 @@ class ActionEditorModal extends Modal {
         }));
     }
 
-    new Setting(contentEl)
+    const footerEl = contentEl.createDiv({ cls: "npo-action-editor-footer" });
+    new Setting(footerEl)
       .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
       .addButton((button) => button.setButtonText("Save").setCta().onClick(async () => {
         const error = validateAction(this.action, this.kind);
@@ -1547,17 +1557,30 @@ class ActionEditorModal extends Modal {
       ACTION_LABELS[this.action.operation],
       "Configure one or more typed property operations. Each row is applied independently within the target note transaction."
     );
+    fieldEl.addClass("npo-operation-section");
     const operations = this.action.operations || (this.action.operations = [defaultOperation(this.action.operation)]);
-    if (operations.length === 0) fieldEl.createDiv({ text: "No operation rows. Add at least one row before saving." });
+    const editorModel = buildOperationEditorModel(this.action.operation, operations);
+    const listEl = fieldEl.createDiv({ cls: "npo-operation-list" });
+    if (editorModel.cards.length === 0) {
+      listEl.createDiv({ cls: "npo-operation-empty-state", text: "No properties configured." });
+    }
 
     const candidates = this.plugin.buildPropertyCandidates(this.plugin.resolveTargetFiles(this.action, this.context));
-    for (const [index, row] of operations.entries()) {
-      const rowEl = fieldEl.createDiv({ cls: "npo-operation-row" });
-      rowEl.addClass("native-property-operator-style-087");
-      rowEl.addClass("native-property-operator-style-088");
-      rowEl.createSpan({ text: `Operation ${index + 1}` });
+    for (const card of editorModel.cards) {
+      const { index, row } = card;
+      const cardEl = listEl.createDiv({ cls: "npo-operation-card" });
+      cardEl.setAttr("data-operation-index", String(index));
+      const headerEl = cardEl.createDiv({ cls: "npo-operation-card-header" });
+      headerEl.createDiv({ cls: "npo-operation-card-title", text: card.title });
+      const removeButton = this.createSmallButton(headerEl, "Remove", () => {
+        this.action.operations.splice(index, 1);
+        this.render();
+      });
+      removeButton.addClass("npo-operation-card-remove");
+      const fieldsEl = cardEl.createDiv({ cls: "npo-operation-card-fields" });
 
-      const sourceInput = this.createFullWidthInput(rowEl, row.propertyName || "");
+      const sourceSetting = new Setting(fieldsEl).setName(card.fields[0]);
+      const sourceInput = this.createFullWidthInput(sourceSetting.controlEl, row.propertyName || "");
       sourceInput.placeholder = this.action.operation === ACTIONS.RENAME ? "Old property name" : "Property name";
       sourceInput.addEventListener("input", () => {
         row.propertyName = sourceInput.value.trim();
@@ -1573,8 +1596,17 @@ class ActionEditorModal extends Modal {
         this.render();
       });
 
+      if (this.pendingOperationFocusIndex === index) {
+        this.pendingOperationFocusIndex = null;
+        window.requestAnimationFrame(() => {
+          cardEl.scrollIntoView({ block: "nearest" });
+          sourceInput.focus();
+        });
+      }
+
       if (this.action.operation === ACTIONS.RENAME) {
-        const destinationInput = this.createFullWidthInput(rowEl, row.newPropertyName || "");
+        const destinationSetting = new Setting(fieldsEl).setName("New property name");
+        const destinationInput = this.createFullWidthInput(destinationSetting.controlEl, row.newPropertyName || "");
         destinationInput.placeholder = "New property name";
         destinationInput.addEventListener("input", () => {
           row.newPropertyName = destinationInput.value.trim();
@@ -1582,7 +1614,7 @@ class ActionEditorModal extends Modal {
       }
 
       if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET || this.action.operation === ACTIONS.TYPE) {
-        const typeSetting = new Setting(rowEl).setName(this.action.operation === ACTIONS.TYPE ? "Target type" : "Type");
+        const typeSetting = new Setting(fieldsEl).setName(this.action.operation === ACTIONS.TYPE ? "Target type" : "Type");
         typeSetting.addDropdown((dropdown) => {
           for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
           dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
@@ -1590,18 +1622,15 @@ class ActionEditorModal extends Modal {
             this.render();
           });
         });
-        if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(rowEl, row);
-        else this.addTypeConversionOptions(rowEl, row);
+        if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(fieldsEl, row);
+        else this.addTypeConversionOptions(fieldsEl, row);
       }
-
-      this.createSmallButton(rowEl, "Remove row", () => {
-        this.action.operations.splice(index, 1);
-        this.render();
-      });
     }
 
-    this.createSmallButton(fieldEl, "Add operation row", () => {
+    const addButtonContainer = fieldEl.createDiv({ cls: "npo-operation-add-button" });
+    this.createSmallButton(addButtonContainer, editorModel.addButtonLabel, () => {
       this.action.operations.push(defaultOperation(this.action.operation));
+      this.pendingOperationFocusIndex = this.action.operations.length - 1;
       this.render();
     });
   }
@@ -1626,7 +1655,7 @@ class ActionEditorModal extends Modal {
       return;
     }
     new Setting(containerEl)
-      .setName(`Value (${type})`)
+      .setName("Value")
       .addText((text) => {
         text.setValue(String(row.value == null ? "" : row.value)).onChange((value) => {
           row.value = value;
@@ -2570,6 +2599,31 @@ function defaultOperation(operation) {
   return { propertyName: "", propertyType: PROPERTY_TYPES.TEXT, value: "" };
 }
 
+function operationCardFieldLabels(operation, row = {}) {
+  if (operation === ACTIONS.REMOVE) return ["Property"];
+  if (operation === ACTIONS.RENAME) return ["Existing property", "New property name"];
+  if (operation === ACTIONS.TYPE) {
+    const labels = ["Property", "Target type", "Convert existing values"];
+    if (row.propertyType === PROPERTY_TYPES.DATE) labels.push("Source date format");
+    if (row.propertyType === PROPERTY_TYPES.DATETIME) labels.push("Date-only values to midnight");
+    return labels;
+  }
+  return ["Property", "Type", "Value"];
+}
+
+function buildOperationEditorModel(operation, operations) {
+  const rows = Array.isArray(operations) ? operations : [];
+  return {
+    addButtonLabel: OPERATION_ADD_BUTTON_LABELS[operation] || "Add property",
+    cards: rows.map((row, index) => ({
+      index,
+      row,
+      title: `Property ${index + 1}`,
+      fields: operationCardFieldLabels(operation, row)
+    }))
+  };
+}
+
 function convertOperationsForOperation(rows, fromOperation, toOperation) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   if (fromOperation === toOperation) return sourceRows;
@@ -3254,7 +3308,10 @@ export {
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
+  buildOperationEditorModel,
+  convertOperationsForOperation,
   createEmptyAction,
+  defaultOperation,
   emptyResult,
   evaluateOperations,
   normalizeAction,

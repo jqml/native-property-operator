@@ -1,12 +1,5 @@
 
 /* Extracted static layout classes for Obsidian community lint compatibility. */
-.npo-operation-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 8px 0;
-}
 
 .native-property-operator-style-001 {
   display: flex;
@@ -190,10 +183,6 @@
 
 .native-property-operator-style-046 {
   margin-top: 10px;
-}
-
-.native-property-operator-style-047 {
-  padding-bottom: 120px;
 }
 
 .native-property-operator-style-048 {
@@ -424,4 +413,117 @@
 .native-property-operator-suggest-opens-down {
   bottom: auto;
   top: calc(100% + 4px);
+}
+
+.npo-action-editor-content {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.npo-operation-section,
+.npo-operation-list,
+.npo-operation-card,
+.npo-operation-card-fields {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.npo-operation-list {
+  display: grid;
+  gap: 12px;
+}
+
+.npo-operation-card {
+  display: block;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.npo-operation-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.npo-operation-card-title {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.npo-operation-card-remove.native-property-operator-style-086 {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.npo-operation-card-fields {
+  display: block;
+}
+
+.npo-operation-card-fields .setting-item,
+.npo-operation-card-fields .setting-item-info,
+.npo-operation-card-fields .setting-item-control {
+  min-width: 0;
+}
+
+.npo-operation-card-fields .setting-item-control {
+  flex: 1 1 50%;
+}
+
+.npo-operation-card-fields .npo-suggest-wrapper,
+.npo-operation-card-fields input,
+.npo-operation-card-fields textarea,
+.npo-operation-card-fields select {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.npo-operation-card-fields .setting-item-control,
+.npo-operation-card-fields .npo-suggest-wrapper,
+.npo-operation-card-fields input,
+.npo-operation-card-fields textarea,
+.npo-operation-card-fields select {
+  width: 100%;
+}
+
+.npo-operation-add-button {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.npo-operation-empty-state {
+  padding: 12px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+
+.npo-action-editor-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.npo-action-editor-footer > .setting-item {
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 600px) {
+  .npo-operation-card-fields .setting-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .npo-operation-card-fields .setting-item-info,
+  .npo-operation-card-fields .setting-item-control {
+    width: 100%;
+  }
 }
