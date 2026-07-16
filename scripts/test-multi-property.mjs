@@ -6,6 +6,20 @@ import fs from "node:fs";
 const require = createRequire(import.meta.url);
 const originalLoad = Module._load;
 const Empty = class {};
+class MockTFile {
+  constructor(path) {
+    this.path = path;
+    this.extension = path.includes(".") ? path.split(".").pop() : "";
+    this.parent = null;
+  }
+}
+class MockTFolder {
+  constructor(path) {
+    this.path = path;
+    this.children = [];
+    this.parent = null;
+  }
+}
 Module._load = function (request, parent, isMain) {
   if (request === "obsidian") {
     return {
@@ -15,8 +29,8 @@ Module._load = function (request, parent, isMain) {
       Plugin: Empty,
       PluginSettingTab: Empty,
       Setting: Empty,
-      TFile: class TFile {},
-      TFolder: class TFolder {},
+      TFile: MockTFile,
+      TFolder: MockTFolder,
       ToggleComponent: Empty,
       normalizePath: (value) => value
     };
@@ -31,12 +45,21 @@ const {
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
+  buildActionPreviewState,
   buildOperationEditorModel,
+  captureModalScrollState,
   convertOperationsForOperation,
   emptyResult,
   evaluateOperations,
+  filterExistingPropertyCandidates,
+  focusWithoutScroll,
   normalizeAction,
+  normalizeAutoTargets,
   normalizeSettings,
+  normalizeTargets,
+  restoreModalScrollState,
+  revealOperationCardWithoutJump,
+  targetMatchesPath,
   validateAction
 } = pluginModule;
 
@@ -69,11 +92,49 @@ const legacy = normalizeSettings({
 assert.deepEqual(legacy.manualActions[0].operations, [{ propertyName: "priority", propertyType: PROPERTY_TYPES.NUMBER, value: "2" }]);
 assert.equal(legacy.manualActions[0].propertyName, undefined);
 assert.equal(legacy.manualActions[0].customField.keep, true);
+assert.deepEqual(legacy.manualActions[0].targets, [{ type: TARGETS.FILE, path: "note.md" }]);
 assert.equal(legacy.autoActions[0].enabled, true);
 assert.equal(legacy.autoActions[0].trigger, "created-or-moved-into-folder");
 assert.equal(legacy.autoActions[0].lastRunKey, "old-run");
-assert.deepEqual(legacy.autoActions[0].autoTargets, [{ path: "Inbox", recursive: true }]);
+assert.equal(legacy.autoActions[0].unrelated, "preserve");
+assert.deepEqual(legacy.autoActions[0].autoTargets, [{ type: TARGETS.FOLDER, path: "Inbox" }]);
 assert.deepEqual(normalizeSettings(legacy), legacy, "migration is idempotent");
+
+const migratedFolderTargets = normalizeTargets([
+  "publish/essays",
+  { id: "root-target", type: TARGETS.FOLDER, path: "/", recursive: false, custom: "keep" },
+  { id: "file-target", type: TARGETS.FILE, path: "notes/example.md" }
+]);
+assert.deepEqual(migratedFolderTargets, [
+  { type: TARGETS.FOLDER, path: "publish/essays" },
+  { id: "root-target", type: TARGETS.FOLDER, path: "/", custom: "keep" },
+  { id: "file-target", type: TARGETS.FILE, path: "notes/example.md" }
+], "string and recursive:false targets normalize to ordered all-descendant typed targets while preserving IDs and unknown fields");
+assert.deepEqual(normalizeTargets(migratedFolderTargets), migratedFolderTargets, "target migration is idempotent");
+assert.deepEqual(normalizeAutoTargets([{ id: "auto-folder", path: "Inbox", recursive: false }]), [
+  { id: "auto-folder", type: TARGETS.FOLDER, path: "Inbox" }
+], "legacy automatic folder targets migrate to the shared schema");
+assert.deepEqual(normalizeAutoTargets("Archive"), [{ type: TARGETS.FOLDER, path: "Archive" }], "scalar string folder targets remain accepted");
+assert.deepEqual(normalizeAction({
+  id: "legacy-folder-path",
+  name: "Legacy folder path",
+  operation: ACTIONS.REMOVE,
+  operations: [{ propertyName: "title" }],
+  target: TARGETS.FOLDER,
+  folderPath: "publish/essays"
+}).targets, [{ type: TARGETS.FOLDER, path: "publish/essays" }], "old imported folderPath configurations remain accepted");
+assert.deepEqual(normalizeAction({
+  id: "auto-shared-targets",
+  name: "Auto shared targets",
+  operation: ACTIONS.REMOVE,
+  operations: [{ propertyName: "title" }],
+  targets: [{ id: "shared", type: TARGETS.FILE, path: "note.md" }]
+}, "auto").autoTargets, [{ id: "shared", type: TARGETS.FILE, path: "note.md" }], "automatic imports using the shared targets field remain accepted");
+assert.deepEqual(normalizeTargets([
+  { type: TARGETS.FOLDER, path: "one" },
+  { type: TARGETS.FOLDER, path: "two" },
+  { type: TARGETS.FOLDER, path: "one" }
+]).map((target) => target.path), ["one", "two"], "duplicate targets are blocked without changing stable order");
 
 function action(operation, operations, extra = {}) {
   return normalizeAction({ id: `test-${operation}`, name: "test", operation, operations, ...extra });
@@ -84,6 +145,99 @@ function run(frontmatter, currentAction) {
   applyOperations(frontmatter, currentAction, decisions, result, "note.md");
   return { decisions, result };
 }
+
+function addFolder(parent, path, byPath) {
+  const folder = new MockTFolder(path);
+  folder.parent = parent;
+  parent.children.push(folder);
+  byPath.set(path, folder);
+  return folder;
+}
+
+function addFile(parent, path, byPath) {
+  const file = new MockTFile(path);
+  file.parent = parent;
+  parent.children.push(file);
+  byPath.set(path, file);
+  return file;
+}
+
+const rootFolder = new MockTFolder("");
+const vaultEntries = new Map([["", rootFolder]]);
+addFile(rootFolder, "root.md", vaultEntries);
+const publishFolder = addFolder(rootFolder, "publish", vaultEntries);
+const essaysFolder = addFolder(publishFolder, "publish/essays", vaultEntries);
+addFile(essaysFolder, "publish/essays/post.md", vaultEntries);
+const archiveFolder = addFolder(essaysFolder, "publish/essays/archive", vaultEntries);
+addFile(archiveFolder, "publish/essays/archive/old.md", vaultEntries);
+const yearFolder = addFolder(archiveFolder, "publish/essays/archive/2025", vaultEntries);
+addFile(yearFolder, "publish/essays/archive/2025/deep.md", vaultEntries);
+addFile(essaysFolder, "publish/essays/image.png", vaultEntries);
+const otherFolder = addFolder(rootFolder, "other-folder", vaultEntries);
+addFile(otherFolder, "other-folder/file.md", vaultEntries);
+const configFolder = addFolder(rootFolder, "vault-config", vaultEntries);
+addFile(configFolder, "vault-config/internal.md", vaultEntries);
+const dotFolder = addFolder(rootFolder, ".hidden", vaultEntries);
+addFile(dotFolder, ".hidden/secret.md", vaultEntries);
+const excludedFolder = addFolder(rootFolder, "excluded", vaultEntries);
+addFile(excludedFolder, "excluded/skip.md", vaultEntries);
+
+const targetPlugin = Object.create(pluginModule.default.prototype);
+targetPlugin.settings = { excludedFolders: ["excluded"], properties: [] };
+targetPlugin.app = {
+  vault: {
+    configDir: "vault-config",
+    getRoot: () => rootFolder,
+    getAbstractFileByPath: (path) => vaultEntries.get(path === "/" ? "" : path) || null,
+    getMarkdownFiles: () => Array.from(vaultEntries.values()).filter((entry) => entry instanceof MockTFile && entry.extension === "md")
+  },
+  workspace: { getActiveFile: () => vaultEntries.get("publish/essays/post.md") }
+};
+
+assert.deepEqual(targetPlugin.getRecursiveMarkdownFilesByPath("/").map((file) => file.path), [
+  "other-folder/file.md",
+  "publish/essays/archive/2025/deep.md",
+  "publish/essays/archive/old.md",
+  "publish/essays/post.md",
+  "root.md"
+], "vault root includes all eligible Markdown descendants and excludes config, dot, excluded, and non-Markdown files");
+assert.deepEqual(targetPlugin.getRecursiveMarkdownFilesByPath("publish/essays").map((file) => file.path), [
+  "publish/essays/archive/2025/deep.md",
+  "publish/essays/archive/old.md",
+  "publish/essays/post.md"
+], "selected folders include every eligible descendant and exclude files outside the tree");
+assert.deepEqual(targetPlugin.resolveConfiguredTargets([
+  { type: TARGETS.FOLDER, path: "publish/essays" },
+  { type: TARGETS.FOLDER, path: "other-folder" },
+  { type: TARGETS.FILE, path: "publish/essays/archive/2025/deep.md" },
+  { type: TARGETS.FILE, path: "root.md" }
+]).map((file) => file.path), [
+  "other-folder/file.md",
+  "publish/essays/archive/2025/deep.md",
+  "publish/essays/archive/old.md",
+  "publish/essays/post.md",
+  "root.md"
+], "multiple folders and files combine without duplicates while preserving exact file targets");
+assert.deepEqual(targetPlugin.resolveTargetFiles(normalizeAction({
+  id: "root-action",
+  name: "Root",
+  operation: ACTIONS.REMOVE,
+  operations: [{ propertyName: "title" }],
+  targetType: TARGETS.SPECIFIC_TARGETS,
+  targets: [{ type: TARGETS.FOLDER, path: "/" }]
+})).map((file) => file.path), targetPlugin.getRecursiveMarkdownFilesByPath("/").map((file) => file.path));
+assert.deepEqual(targetPlugin.resolveTargetFiles(normalizeAction({
+  id: "auto-root-action",
+  name: "Auto root",
+  trigger: "created-or-moved-into-folder",
+  operation: ACTIONS.REMOVE,
+  operations: [{ propertyName: "title" }],
+  autoTargets: [{ type: TARGETS.FOLDER, path: "/" }]
+}, "auto")).map((file) => file.path), targetPlugin.getRecursiveMarkdownFilesByPath("/").map((file) => file.path), "automatic editor and preview resolution uses the same all-descendant target resolver");
+assert.equal(targetMatchesPath({ type: TARGETS.FOLDER, path: "publish/essays" }, "publish/essays/archive/2025/deep.md"), true);
+assert.equal(targetMatchesPath({ type: TARGETS.FOLDER, path: "publish/essays" }, "other-folder/file.md"), false);
+assert.equal(targetMatchesPath({ type: TARGETS.FOLDER, path: "/" }, "publish/essays/post.md"), true);
+assert.equal(targetMatchesPath({ type: TARGETS.FILE, path: "root.md" }, "root.md"), true);
 
 let currentAction = action(ACTIONS.ADD, [
   { propertyName: "one", propertyType: PROPERTY_TYPES.TEXT, value: "a" },
@@ -100,6 +254,34 @@ currentAction = action(ACTIONS.REMOVE, [{ propertyName: "one" }, { propertyName:
 result = run({ one: "a" }, currentAction).result;
 assert.equal(result.operationsChanged, 1);
 assert.equal(result.operationsSkipped, 1);
+
+const exactRemovalFrontmatter = {
+  title: "Second post",
+  status: "growing",
+  heroImage: "/blog-placeholder.jpg",
+  Title: "Case-sensitive property"
+};
+let removalCallbacks = 0;
+const removalPlugin = Object.create(pluginModule.default.prototype);
+removalPlugin.app = {
+  fileManager: {
+    processFrontMatter: async (_file, callback) => {
+      removalCallbacks += 1;
+      callback(exactRemovalFrontmatter);
+    }
+  }
+};
+const exactRemovalResult = await removalPlugin.applyAction(
+  action(ACTIONS.REMOVE, [{ propertyName: "title" }, { propertyName: "status" }]),
+  [{ file: {}, path: "post.md", status: "changed", operations: [] }]
+);
+assert.deepEqual(exactRemovalFrontmatter, {
+  heroImage: "/blog-placeholder.jpg",
+  Title: "Case-sensitive property"
+}, "exact removal deletes only configured keys and preserves unrelated or differently cased keys");
+assert.equal(removalCallbacks, 1, "all removals use one processFrontMatter callback per target file");
+assert.equal(exactRemovalResult.filesChanged, 1);
+assert.equal(exactRemovalResult.operationsChanged, 2);
 
 currentAction = action(ACTIONS.SET, [
   { propertyName: "one", propertyType: PROPERTY_TYPES.TEXT, value: "b" },
@@ -213,6 +395,26 @@ assert.equal(autoFrontmatter.safe, "new");
 assert.equal(autoResult.changed, 1, "one file changed");
 assert.equal(autoResult.operationsChanged, 1);
 assert.equal(autoResult.operationsSkipped, 1);
+const automaticSetFrontmatter = { existing: "keep" };
+const automaticSetResult = run(automaticSetFrontmatter, action(ACTIONS.SET, [
+  { propertyName: "existing", propertyType: PROPERTY_TYPES.TEXT, value: "replace" },
+  { propertyName: "new", propertyType: PROPERTY_TYPES.TEXT, value: "added" }
+], { trigger: "created-or-moved-into-folder", addIfMissing: true })).result;
+assert.deepEqual(automaticSetFrontmatter, { existing: "keep", new: "added" }, "automatic Set skips overwrite conflicts while applying independent safe rows");
+assert.equal(automaticSetResult.operationsChanged, 1);
+assert.equal(automaticSetResult.operationsSkipped, 1);
+
+const automaticFolderAction = {
+  trigger: "created-or-moved-into-folder",
+  autoTargets: [{ type: TARGETS.FOLDER, path: "publish/essays" }]
+};
+assert.equal(targetPlugin.autoActionMatches(automaticFolderAction, vaultEntries.get("publish/essays/archive/2025/deep.md"), "create", ""), true, "automatic create trigger matches nested descendants");
+assert.equal(targetPlugin.autoActionMatches(automaticFolderAction, vaultEntries.get("publish/essays/post.md"), "rename", "other-folder/post.md"), true, "automatic rename trigger matches a move into the selected tree");
+assert.equal(targetPlugin.autoActionMatches(automaticFolderAction, vaultEntries.get("publish/essays/post.md"), "rename", "publish/essays/archive/post.md"), false, "moves within the same selected tree are not duplicate moved-into-folder runs");
+assert.equal(targetPlugin.autoActionMatches({
+  trigger: "created-or-moved-into-folder",
+  autoTargets: [{ type: TARGETS.FILE, path: "root.md" }]
+}, vaultEntries.get("root.md"), "create", ""), true, "automatic exact-file targets are supported by the shared target schema");
 
 const cycle = action(ACTIONS.RENAME, [
   { propertyName: "a", newPropertyName: "b" },
@@ -257,6 +459,11 @@ assert.deepEqual(twoCardModel.cards.map((card) => card.title), ["Property 1", "P
 assert.equal(twoCardModel.cards[0].row, orderedRows[0], "card keeps the matching operation row");
 assert.equal(twoCardModel.cards[1].row, orderedRows[1], "operation order remains stable");
 assert.equal(twoCardModel.addButtonLabel, "Add property to remove");
+const removableRows = [{ propertyName: "first" }, { propertyName: "middle" }, { propertyName: "last" }];
+removableRows.splice(1, 1);
+const cardsAfterRemoval = buildOperationEditorModel(ACTIONS.REMOVE, removableRows);
+assert.deepEqual(cardsAfterRemoval.cards.map((card) => card.title), ["Property 1", "Property 2"]);
+assert.deepEqual(cardsAfterRemoval.cards.map((card) => card.row.propertyName), ["first", "last"], "removing one card preserves and renumbers remaining rows");
 
 assert.equal(buildOperationEditorModel(ACTIONS.SET, []).addButtonLabel, "Add property value");
 assert.equal(buildOperationEditorModel(ACTIONS.RENAME, []).addButtonLabel, "Add rename");
@@ -271,6 +478,58 @@ const switchedToSet = convertOperationsForOperation([
   { propertyName: "kept", propertyType: PROPERTY_TYPES.NUMBER, value: "2" }
 ], ACTIONS.ADD, ACTIONS.SET);
 assert.deepEqual(buildOperationEditorModel(ACTIONS.SET, switchedToSet).cards[0].fields, ["Property", "Type", "Value"], "switching action type creates value fields");
+
+const noFilesPreview = buildActionPreviewState([], {
+  targetType: TARGETS.SPECIFIC_TARGETS,
+  targets: [{ type: TARGETS.FOLDER, path: "/" }]
+});
+assert.equal(noFilesPreview.kind, "no-files");
+assert.match(noFilesPreview.message, /No Markdown files matched the selected targets/);
+assert.match(noFilesPreview.message, /Folder: \//);
+assert.doesNotMatch(noFilesPreview.message, /property does not exist/i, "zero targets are not misreported as missing properties");
+const missingPropertyPreview = buildActionPreviewState([{
+  path: "note.md",
+  status: "skipped",
+  operations: [{ status: "skipped", reason: "Property does not exist" }]
+}], {});
+assert.equal(missingPropertyPreview.kind, "files-resolved", "resolved files with missing properties remain distinct from zero files");
+assert.equal(missingPropertyPreview.counts.filesSkipped, 1);
+
+const browserCandidates = Array.from({ length: 30 }, (_, index) => ({
+  name: index === 0 ? "alpha" : `Property ${String(index).padStart(2, "0")}`,
+  inferredType: PROPERTY_TYPES.TEXT,
+  count: index + 1,
+  examples: [`note-${index}.md`]
+}));
+const allBrowserCandidates = filterExistingPropertyCandidates(browserCandidates, "", ["Property 05"]);
+assert.equal(allBrowserCandidates.length, 29, "blank property-browser query returns every uncataloged candidate without suggestLimit truncation");
+assert.equal(allBrowserCandidates.some((candidate) => candidate.name === "Property 05"), false, "catalog duplicates are excluded");
+assert.deepEqual(allBrowserCandidates.map((candidate) => candidate.name), allBrowserCandidates.map((candidate) => candidate.name).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }) || a.localeCompare(b)), "property browser ordering is deterministic and case-insensitive");
+assert.deepEqual(filterExistingPropertyCandidates(browserCandidates, "ALPHA").map((candidate) => candidate.name), ["alpha"], "property browser filtering is case-insensitive");
+
+let anchorTop = 120;
+const scrollEl = {
+  scrollTop: 360,
+  getBoundingClientRect: () => ({ top: 20 })
+};
+const anchorEl = { getBoundingClientRect: () => ({ top: anchorTop }) };
+const mockContentEl = {
+  closest: () => scrollEl,
+  querySelector: () => anchorEl
+};
+const capturedScroll = captureModalScrollState(mockContentEl);
+assert.equal(capturedScroll.scrollTop, 360);
+anchorTop = 145;
+restoreModalScrollState(mockContentEl, capturedScroll);
+assert.equal(scrollEl.scrollTop, 385, "restoring a rerender preserves scrollTop plus the stable operation anchor offset instead of resetting to zero");
+let focusOptions = null;
+const focusInput = { focus: (options) => { focusOptions = options; } };
+focusWithoutScroll(focusInput);
+assert.deepEqual(focusOptions, { preventScroll: true }, "new-card focus prevents browser scroll when supported");
+let revealOptions = null;
+const revealCard = { scrollIntoView: (options) => { revealOptions = options; } };
+revealOperationCardWithoutJump(mockContentEl, revealCard, focusInput);
+assert.deepEqual(revealOptions, { block: "nearest", inline: "nearest" }, "new cards reveal with nearest scrolling");
 
 const source = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8");
@@ -288,14 +547,41 @@ assert.match(operationEditorSource, /for \(const card of editorModel\.cards\)/, 
 assert.ok(operationEditorSource.indexOf('cls: "npo-operation-card-header"') < operationEditorSource.indexOf('"Remove"'), "Remove button belongs to the card header");
 assert.match(operationEditorSource, /text: "No properties configured\."/, "empty operation list has a clean empty state");
 assert.doesNotMatch(operationEditorSource, /Add operation row/);
-const renderSource = source.slice(source.indexOf("  render() {", source.indexOf("class ActionEditorModal")), source.indexOf("  addOperationEditor(contentEl) {"));
+const renderSource = source.slice(source.indexOf("  render(options = {}) {", source.indexOf("class ActionEditorModal")), source.indexOf("  addOperationEditor(contentEl) {"));
 assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Overwrite existing values")'), "action-level overwrite setting renders after the property list");
 assert.ok(renderSource.indexOf("this.addOperationEditor(contentEl);") < renderSource.indexOf('setName("Add if missing")'), "action-level add-if-missing setting renders after the property list");
-const targetEditorSource = source.slice(source.indexOf("  addManualTargetSetting(contentEl) {"), source.indexOf("  addFileTargetSetting(contentEl) {"));
+const targetEditorSource = source.slice(source.indexOf("  addManualTargetSetting(contentEl) {"), source.indexOf("  createVerticalField(containerEl, label, desc) {"));
 assert.doesNotMatch(targetEditorSource, /npo-operation-/, "operation-card styles do not leak into target controls");
+assert.match(targetEditorSource, /npo-target-row/);
+assert.match(targetEditorSource, /this\.setEditorTargets\(targets\.filter/);
+assert.match(targetEditorSource, /targets\.concat\(\{ type, path: normalized \}\)/);
 assert.doesNotMatch(styles, /\.npo-operation-row\s*\{/);
 assert.doesNotMatch(source, /cls: "npo-operation-row"/);
+assert.doesNotMatch(styles, /\.npo-operation-card\s*\{[^}]*position:\s*absolute/s, "operation cards are never absolutely positioned");
 assert.match(styles, /\.npo-operation-card-header\s*\{[\s\S]*?display: flex;/);
 const cardFieldRules = Array.from(styles.matchAll(/\.npo-operation-card-fields\s*\{([^}]*)\}/g));
 assert.ok(cardFieldRules.length > 0);
 assert.ok(cardFieldRules.every((match) => !/display:\s*flex/.test(match[1])), "operation field containers never flatten nested Setting rows");
+assert.match(renderSource, /npo-operation-selector/);
+assert.match(renderSource, /npo-operation-selector-control/);
+assert.match(targetEditorSource, /npo-target-selector-control/);
+assert.match(styles, /\.npo-operation-selector-control,[^}]*justify-content:\s*flex-start/s, "Operation and Target selectors use scoped left alignment");
+assert.doesNotMatch(styles, /(^|\n)\.setting-item-control\s*\{/m, "no global Setting control alignment rule is added");
+assert.match(operationEditorSource, /rerenderPreservingScroll\(\{ focusOperationIndex:/, "Add preserves scroll and focuses the new card");
+assert.match(operationEditorSource, /this\.rerenderPreservingScroll\(\);/, "Remove and Type changes preserve scroll");
+assert.match(source, /captureModalScrollState/);
+assert.match(source, /focus\(\{ preventScroll: true \}\)/);
+assert.match(source, /scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\)/);
+assert.doesNotMatch(source, /window\.scroll|document\.documentElement\.scroll|scrollTo\(/, "no global page scroll call is used");
+assert.doesNotMatch(source, /getDirectMarkdownFiles|direct child Markdown notes|Include subfolders/);
+assert.match(source, /getRecursiveMarkdownFilesByPath/);
+assert.match(source, /No Markdown files matched the selected targets/);
+assert.doesNotMatch(source, /vault\.modify\(/, "frontmatter actions never rewrite full notes");
+const browserSource = source.slice(source.indexOf("class ExistingPropertyBrowserModal"), source.indexOf("class ActionEditorModal"));
+for (const key of ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", "Enter", "Escape"]) assert.match(browserSource, new RegExp(`"${key}"`));
+assert.match(browserSource, /npo-existing-property-results/);
+const browserFilterSource = source.slice(source.indexOf("function filterExistingPropertyCandidates"), source.indexOf("function formatExistingPropertyCandidate"));
+assert.doesNotMatch(browserFilterSource, /suggestLimit|slice\(0,/, "full browser filtering is never truncated by the compact suggestion limit");
+assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overflow-y:\s*auto/s);
+assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overscroll-behavior:\s*contain/s);
+assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overflow-x:\s*hidden/s);

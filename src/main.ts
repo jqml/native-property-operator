@@ -197,13 +197,13 @@ export default class NativePropertyOperatorPlugin extends Plugin {
 
     if (file instanceof TFolder) {
       if (!this.isVisibleFolder(file)) return null;
-      const files = this.getDirectMarkdownFilesInFolder(file);
+      const files = this.getRecursiveMarkdownFilesInFolder(file);
       if (files.length === 0) return null;
       return {
         targetType: TARGETS.PROVIDED_FILES,
         files,
         targetPath: file.path || "/",
-        label: `${file.path || "/"} direct Markdown notes`,
+        label: `${file.path || "/"} Markdown notes and descendants`,
         requiresConfirm: true
       };
     }
@@ -220,7 +220,12 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     if (!(folder instanceof TFolder)) return false;
     const parts = folder.path ? folder.path.split("/") : [];
     if (parts.includes(this.app.vault.configDir)) return false;
-    return !parts.some((part) => part.startsWith(".") && part.length > 1);
+    if (parts.some((part) => part.startsWith(".") && part.length > 1)) return false;
+    const normalizedPath = normalizePathInput(folder.path);
+    return !(this.settings.excludedFolders || []).some((excludedFolder) => {
+      const excluded = normalizePathInput(excludedFolder);
+      return excluded && normalizedPath && (normalizedPath === excluded || normalizedPath.startsWith(`${excluded}/`));
+    });
   }
 
   isAllowedMarkdownFile(file) {
@@ -234,18 +239,11 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     });
   }
 
-  getDirectMarkdownFilesInFolder(folder) {
-    if (!this.isVisibleFolder(folder)) return [];
-    return folder.children
-      .filter((child) => this.isAllowedMarkdownFile(child))
-      .sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  getDirectMarkdownFilesByPath(folderPath) {
+  getRecursiveMarkdownFilesByPath(folderPath) {
     const normalized = normalizeFolderPath(folderPath);
     const folder = normalized === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(normalized);
     if (!(folder instanceof TFolder)) return [];
-    return this.getDirectMarkdownFilesInFolder(folder);
+    return this.getRecursiveMarkdownFilesInFolder(folder);
   }
 
   getVisibleFolders() {
@@ -294,24 +292,26 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  getMarkdownFilesForAutoTarget(target) {
-    const folderPath = normalizeFolderPath(target.path);
-    if (folderPath === "/" && target.recursive) {
-      return this.app.vault.getMarkdownFiles().filter((file) => this.isAllowedMarkdownFile(file));
+  getMarkdownFilesForTarget(target) {
+    if (!target) return [];
+    if (target.type === TARGETS.FILE) {
+      const file = this.app.vault.getAbstractFileByPath(String(target.path || "").trim());
+      return this.isAllowedMarkdownFile(file) ? [file] : [];
     }
-    const folder = folderPath === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(folderPath);
-    if (!(folder instanceof TFolder) || !this.isVisibleFolder(folder)) return [];
-    return target.recursive ? this.getRecursiveMarkdownFilesInFolder(folder) : this.getDirectMarkdownFilesInFolder(folder);
+    if (target.type === TARGETS.FOLDER) return this.getRecursiveMarkdownFilesByPath(target.path);
+    return [];
+  }
+
+  resolveConfiguredTargets(targets) {
+    const byPath = new Map();
+    for (const target of targets || []) {
+      for (const file of this.getMarkdownFilesForTarget(target)) byPath.set(file.path, file);
+    }
+    return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
   }
 
   resolveAutoActionExistingFiles(action) {
-    const byPath = new Map();
-    for (const target of action.autoTargets || []) {
-      for (const file of this.getMarkdownFilesForAutoTarget(target)) {
-        if (this.isAllowedMarkdownFile(file)) byPath.set(file.path, file);
-      }
-    }
-    return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
+    return this.resolveConfiguredTargets(action.autoTargets || []);
   }
 
   openAutoSyncPreview(action, enableAfterApply = false) {
@@ -331,15 +331,12 @@ export default class NativePropertyOperatorPlugin extends Plugin {
       return context.files.filter((file) => this.isAllowedMarkdownFile(file)).sort((a, b) => a.path.localeCompare(b.path));
     }
 
+    if (action.trigger && action.autoTargets && action.autoTargets.length > 0) {
+      return this.resolveConfiguredTargets(action.autoTargets);
+    }
+
     if (action.targets && action.targets.length > 0) {
-      const byPath = new Map();
-      for (const target of action.targets) {
-        const files = target.type === TARGETS.FOLDER
-          ? this.getDirectMarkdownFilesByPath(target.path)
-          : [this.app.vault.getAbstractFileByPath(target.path)].filter((file) => this.isAllowedMarkdownFile(file));
-        for (const file of files) byPath.set(file.path, file);
-      }
-      return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
+      return this.resolveConfiguredTargets(action.targets);
     }
 
     if (action.targetType === TARGETS.FILE) {
@@ -348,14 +345,14 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     }
 
     if (action.targetType === TARGETS.FOLDER) {
-      return this.getDirectMarkdownFilesByPath(action.targetFolder || action.targetPath || "");
+      return this.getRecursiveMarkdownFilesByPath(action.targetFolder || action.targetPath || "");
     }
 
     const activeFile = this.getActiveMarkdownFile();
     if (!activeFile) return [];
 
     if (action.targetType === TARGETS.CURRENT_FOLDER) {
-      return activeFile.parent ? this.getDirectMarkdownFilesInFolder(activeFile.parent) : [];
+      return activeFile.parent ? this.getRecursiveMarkdownFilesInFolder(activeFile.parent) : [];
     }
 
     return [activeFile];
@@ -471,17 +468,28 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     const operation = normalizeAction(action);
 
     for (const file of files) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      const frontmatter = cache && cache.frontmatter ? cache.frontmatter : {};
-      const decisions = evaluateOperations(frontmatter, operation, { automatic: Boolean(operation.trigger) });
-      const changed = decisions.filter((item) => item.status === "changed").length;
-      entries.push({
-        file,
-        path: file.path,
-        status: changed > 0 ? "changed" : "skipped",
-        reason: summarizeOperationDecisions(decisions),
-        operations: decisions
-      });
+      try {
+        const cache = this.app.metadataCache.getFileCache(file);
+        const frontmatter = cache && cache.frontmatter ? cache.frontmatter : {};
+        const decisions = evaluateOperations(frontmatter, operation, { automatic: Boolean(operation.trigger) });
+        const changed = decisions.filter((item) => item.status === "changed").length;
+        entries.push({
+          file,
+          path: file.path,
+          status: changed > 0 ? "changed" : "skipped",
+          reason: summarizeOperationDecisions(decisions),
+          operations: decisions
+        });
+      } catch (error) {
+        const reason = `Could not read current frontmatter: ${error && error.message ? error.message : String(error)}`;
+        entries.push({
+          file,
+          path: file.path,
+          status: "failed",
+          reason,
+          operations: [{ status: "failed", reason }]
+        });
+      }
     }
 
     return entries;
@@ -607,7 +615,7 @@ export default class NativePropertyOperatorPlugin extends Plugin {
       const runKey = `${action.id}:${eventName}:${file.path}:${oldPath || ""}`;
       if (this.autoRunKeys.has(runKey) || action.lastRunKey === runKey) continue;
       this.autoRunKeys.add(runKey);
-      window.setTimeout(() => this.autoRunKeys.delete(runKey), 5000);
+      getOwnerWindow(this.app.workspace && this.app.workspace.containerEl).setTimeout(() => this.autoRunKeys.delete(runKey), 5000);
 
       action.lastRunKey = runKey;
       await this.previewAndApplyAction(action, {
@@ -621,13 +629,12 @@ export default class NativePropertyOperatorPlugin extends Plugin {
 
   autoActionMatches(action, file, eventName, oldPath) {
     if (action.trigger !== AUTO_TRIGGER) return false;
-    const parentPath = file.parent ? file.parent.path || "/" : "/";
-    const matched = (action.autoTargets || []).some((target) => folderTargetMatchesPath(target, parentPath));
+    const targets = action.autoTargets || [];
+    const matched = targets.some((target) => targetMatchesPath(target, file.path));
     if (!matched) return false;
     if (eventName === "create") return true;
     if (eventName === "rename") {
-      const oldParent = parentPathFromPath(oldPath);
-      return oldParent !== parentPath;
+      return !targets.some((target) => targetMatchesPath(target, oldPath));
     }
     return false;
   }
@@ -663,6 +670,7 @@ function evaluateOperations(frontmatter, action, options = {}) {
     }
 
     if (action.operation === ACTIONS.SET) {
+      if (automatic && hasProperty) return Object.assign({}, row, { status: "skipped", reason: "Property already exists (automatic overwrite is disabled)" });
       if (!hasProperty && !action.addIfMissing) return Object.assign({}, row, { status: "skipped", reason: "Property does not exist" });
       return Object.assign({}, row, { status: "changed", reason: hasProperty ? "Will change property value" : "Will add missing property" });
     }
@@ -1082,7 +1090,7 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
           new Notice("No uncataloged properties detected in visible Markdown notes.");
           return;
         }
-        new ExistingPropertySuggestModal(this.app, detected, async (item) => {
+        new ExistingPropertyBrowserModal(this.app, detected, this.plugin.settings.properties.map((property) => property.name), async (item) => {
           if (this.plugin.settings.properties.some((property) => property.name === item.name)) {
             new Notice("Property is already in the catalog.");
             return;
@@ -1435,24 +1443,89 @@ class PropertyCatalogApplyModal extends Modal {
   }
 }
 
-class ExistingPropertySuggestModal extends FuzzySuggestModal {
-  constructor(app, items, onChoose) {
+class ExistingPropertyBrowserModal extends Modal {
+  constructor(app, items, catalogNames, onChoose) {
     super(app);
     this.items = items;
+    this.catalogNames = catalogNames;
     this.onChoose = onChoose;
+    this.query = "";
+    this.filteredItems = [];
+    this.selectedIndex = 0;
   }
 
-  getItems() {
-    return this.items;
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("npo-existing-property-browser");
+    contentEl.createEl("h2", { text: "Add existing property" });
+    const searchSetting = new Setting(contentEl).setName("Search properties");
+    searchSetting.settingEl.addClass("npo-existing-property-search");
+    searchSetting.addText((text) => {
+      this.inputEl = text.inputEl;
+      text.setPlaceholder("Type to filter, or leave blank to browse all").onChange((value) => {
+        this.query = value;
+        this.selectedIndex = 0;
+        this.renderResults();
+      });
+      text.inputEl.addEventListener("keydown", (event) => this.handleKeydown(event));
+    });
+    this.resultsEl = contentEl.createDiv({ cls: "npo-existing-property-results" });
+    this.renderResults();
+    focusWithoutScroll(this.inputEl);
   }
 
-  getItemText(item) {
-    const examples = item.examples && item.examples.length > 0 ? ` - examples: ${item.examples.join(", ")}` : "";
-    return `${item.name} - ${item.inferredType} - appears in ${item.count} file(s)${examples}`;
+  renderResults() {
+    this.filteredItems = filterExistingPropertyCandidates(this.items, this.query, this.catalogNames);
+    this.resultsEl.empty();
+    if (this.filteredItems.length === 0) {
+      this.resultsEl.createDiv({ cls: "npo-existing-property-empty", text: "No matching uncataloged properties." });
+      return;
+    }
+    this.selectedIndex = Math.min(this.selectedIndex, this.filteredItems.length - 1);
+    for (const [index, item] of this.filteredItems.entries()) {
+      const rowEl = this.resultsEl.createEl("button", {
+        cls: "npo-existing-property-result",
+        text: formatExistingPropertyCandidate(item)
+      });
+      rowEl.toggleClass("npo-existing-property-result-selected", index === this.selectedIndex);
+      rowEl.addEventListener("click", () => this.chooseSelected(index));
+    }
   }
 
-  onChooseItem(item) {
-    this.onChoose(item);
+  handleKeydown(event) {
+    const keys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", "Enter", "Escape"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Escape") {
+      this.close();
+      return;
+    }
+    if (event.key === "Enter") {
+      this.chooseSelected(this.selectedIndex);
+      return;
+    }
+    if (this.filteredItems.length === 0) return;
+    if (event.key === "Home") this.selectedIndex = 0;
+    else if (event.key === "End") this.selectedIndex = this.filteredItems.length - 1;
+    else if (event.key === "ArrowUp") this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+    else if (event.key === "ArrowDown") this.selectedIndex = Math.min(this.filteredItems.length - 1, this.selectedIndex + 1);
+    else if (event.key === "PageUp") this.selectedIndex = Math.max(0, this.selectedIndex - 10);
+    else if (event.key === "PageDown") this.selectedIndex = Math.min(this.filteredItems.length - 1, this.selectedIndex + 10);
+    this.renderResults();
+    const selectedEl = this.resultsEl.children[this.selectedIndex];
+    if (selectedEl && typeof selectedEl.scrollIntoView === "function") selectedEl.scrollIntoView({ block: "nearest" });
+  }
+
+  async chooseSelected(index) {
+    const item = this.filteredItems[index];
+    if (!item) return;
+    this.close();
+    try {
+      await this.onChoose(item);
+    } catch (error) {
+      new Notice(`Could not add property: ${error && error.message ? error.message : String(error)}`);
+    }
   }
 }
 
@@ -1479,8 +1552,10 @@ class ActionEditorModal extends Modal {
     this.render();
   }
 
-  render() {
+  render(options = {}) {
     const { contentEl } = this;
+    const scrollState = options.scrollState || null;
+    this.renderedOperationFocusTarget = null;
     contentEl.empty();
     contentEl.addClass("npo-action-editor-content");
     contentEl.createEl("h2", { text: this.kind === "auto" ? "Auto action" : "Manual action" });
@@ -1494,7 +1569,7 @@ class ActionEditorModal extends Modal {
     if (this.kind === "auto") {
       new Setting(contentEl)
         .setName("Trigger")
-        .setDesc("Runs only when a Markdown note is created in or moved into a target folder.")
+        .setDesc("Runs when a Markdown note is created in or moved into a selected folder tree, or matches a selected file target.")
         .addText((text) => text.setValue("New or moved Markdown note").setDisabled(true));
 
       this.addAutoTargetsSetting(contentEl);
@@ -1502,14 +1577,15 @@ class ActionEditorModal extends Modal {
       this.addManualTargetSetting(contentEl);
     }
 
-    new Setting(contentEl)
-      .setName("Operation")
-      .addDropdown((dropdown) => {
+    const operationSetting = new Setting(contentEl).setName("Operation");
+    operationSetting.settingEl.addClass("npo-operation-selector");
+    operationSetting.controlEl.addClass("npo-operation-selector-control");
+    operationSetting.addDropdown((dropdown) => {
         for (const [value, label] of Object.entries(ACTION_LABELS)) dropdown.addOption(value, label);
         dropdown.setValue(this.action.operation).onChange((value) => {
           this.action.operations = convertOperationsForOperation(this.action.operations, this.action.operation, value);
           this.action.operation = value;
-          this.render();
+          this.rerenderPreservingScroll();
         });
       });
 
@@ -1549,6 +1625,17 @@ class ActionEditorModal extends Modal {
           new Notice(`Could not save action: ${error && error.message ? error.message : String(error)}`);
         }
       }));
+
+    const focusTarget = this.renderedOperationFocusTarget;
+    scheduleModalScrollRestore(contentEl, scrollState, () => {
+      if (focusTarget) revealOperationCardWithoutJump(contentEl, focusTarget.cardEl, focusTarget.inputEl);
+    });
+  }
+
+  rerenderPreservingScroll(options = {}) {
+    const scrollState = captureModalScrollState(this.contentEl);
+    if (Number.isInteger(options.focusOperationIndex)) this.pendingOperationFocusIndex = options.focusOperationIndex;
+    this.render({ scrollState });
   }
 
   addOperationEditor(contentEl) {
@@ -1574,7 +1661,7 @@ class ActionEditorModal extends Modal {
       headerEl.createDiv({ cls: "npo-operation-card-title", text: card.title });
       const removeButton = this.createSmallButton(headerEl, "Remove", () => {
         this.action.operations.splice(index, 1);
-        this.render();
+        this.rerenderPreservingScroll();
       });
       removeButton.addClass("npo-operation-card-remove");
       const fieldsEl = cardEl.createDiv({ cls: "npo-operation-card-fields" });
@@ -1593,15 +1680,12 @@ class ActionEditorModal extends Modal {
         if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
           row.propertyType = this.plugin.getPropertyType(candidate.name, row.propertyType || PROPERTY_TYPES.TEXT);
         }
-        this.render();
+        this.rerenderPreservingScroll();
       });
 
       if (this.pendingOperationFocusIndex === index) {
         this.pendingOperationFocusIndex = null;
-        window.requestAnimationFrame(() => {
-          cardEl.scrollIntoView({ block: "nearest" });
-          sourceInput.focus();
-        });
+        this.renderedOperationFocusTarget = { cardEl, inputEl: sourceInput };
       }
 
       if (this.action.operation === ACTIONS.RENAME) {
@@ -1619,7 +1703,7 @@ class ActionEditorModal extends Modal {
           for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
           dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
             row.propertyType = value;
-            this.render();
+            this.rerenderPreservingScroll();
           });
         });
         if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(fieldsEl, row);
@@ -1630,8 +1714,7 @@ class ActionEditorModal extends Modal {
     const addButtonContainer = fieldEl.createDiv({ cls: "npo-operation-add-button" });
     this.createSmallButton(addButtonContainer, editorModel.addButtonLabel, () => {
       this.action.operations.push(defaultOperation(this.action.operation));
-      this.pendingOperationFocusIndex = this.action.operations.length - 1;
-      this.render();
+      this.rerenderPreservingScroll({ focusOperationIndex: this.action.operations.length - 1 });
     });
   }
 
@@ -1694,9 +1777,10 @@ class ActionEditorModal extends Modal {
   }
 
   addManualTargetSetting(contentEl) {
-    new Setting(contentEl)
-      .setName("Target")
-      .addDropdown((dropdown) => {
+    const targetSetting = new Setting(contentEl).setName("Target");
+    targetSetting.settingEl.addClass("npo-target-selector");
+    targetSetting.controlEl.addClass("npo-target-selector-control");
+    targetSetting.addDropdown((dropdown) => {
         dropdown
           .addOption(TARGETS.CURRENT_FILE, TARGET_LABELS[TARGETS.CURRENT_FILE])
           .addOption(TARGETS.CURRENT_FOLDER, TARGET_LABELS[TARGETS.CURRENT_FOLDER])
@@ -1705,7 +1789,7 @@ class ActionEditorModal extends Modal {
           .onChange((value) => {
             this.action.targetType = value;
             if (value === TARGETS.SPECIFIC_TARGETS && !this.action.targets) this.action.targets = [];
-            this.render();
+            this.rerenderPreservingScroll();
           });
       });
 
@@ -1713,119 +1797,54 @@ class ActionEditorModal extends Modal {
   }
 
   addAutoTargetsSetting(contentEl) {
-    const fieldEl = this.createVerticalField(
-      contentEl,
-      "Targets",
-      "Add one or more visible folders. Auto actions run when a Markdown note is created in or moved into these folders."
-    );
-    const rootNote = fieldEl.createDiv({
-      text: "Folder targets run when a Markdown note is created or moved into a target folder. By default, only notes directly inside the folder are included. Enable 'Include subfolders' to also include notes created or moved inside nested folders. Vault root (/) with Include subfolders enabled applies to all visible Markdown notes in the vault."
-    });
-    rootNote.addClass("native-property-operator-style-048");
-    rootNote.addClass("native-property-operator-style-049");
-    rootNote.addClass("native-property-operator-style-050");
-
-    const targets = this.action.autoTargets || [];
-    if (targets.length === 0) {
-      const emptyEl = fieldEl.createDiv({ text: "No target folders." });
-      emptyEl.addClass("native-property-operator-style-051");
-      emptyEl.addClass("native-property-operator-style-052");
-    }
-    for (const [index, target] of targets.entries()) {
-      const rowEl = fieldEl.createDiv();
-      rowEl.addClass("native-property-operator-style-053");
-      rowEl.addClass("native-property-operator-style-054");
-      rowEl.addClass("native-property-operator-style-055");
-      rowEl.addClass("native-property-operator-style-056");
-      rowEl.addClass("native-property-operator-style-057");
-      rowEl.addClass("native-property-operator-style-058");
-      const folderEl = rowEl.createSpan({ text: `Folder: ${displayFolderPath(target.path)}` });
-      folderEl.addClass("native-property-operator-style-059");
-      const controlsEl = rowEl.createDiv();
-      controlsEl.addClass("native-property-operator-style-060");
-      controlsEl.addClass("native-property-operator-style-061");
-      controlsEl.addClass("native-property-operator-style-062");
-      controlsEl.addClass("native-property-operator-style-063");
-      controlsEl.addClass("native-property-operator-style-064");
-      controlsEl.createSpan({ text: "Include subfolders" });
-      new ToggleComponent(controlsEl)
-        .setValue(Boolean(target.recursive))
-        .onChange((value) => {
-          this.action.autoTargets[index].recursive = value;
-        });
-      const removeButton = controlsEl.createEl("button", { text: "Remove" });
-      removeButton.addEventListener("click", () => {
-        this.action.autoTargets = targets.filter((_, itemIndex) => itemIndex !== index);
-        this.render();
-      });
-    }
-
-    this.addAutoTargetAutocomplete(fieldEl);
-  }
-
-  addAutoTargetAutocomplete(containerEl) {
-    const existing = new Set((this.action.autoTargets || []).map((target) => normalizeFolderPath(target.path)));
-    const options = this.plugin.getVisibleFolders().filter((folder) => !existing.has(normalizeFolderPath(folder)));
-    const fieldEl = this.createVerticalField(containerEl, "Add folder", "Visible vault folder path.");
-    if (options.length === 0) {
-      const emptyEl = fieldEl.createDiv({ text: "No remaining folder targets." });
-      emptyEl.addClass("native-property-operator-style-065");
-      return;
-    }
-    const inputEl = this.createFullWidthInput(fieldEl, "");
-    let pending = "";
-    inputEl.addEventListener("input", () => {
-      pending = normalizeFolderPath(inputEl.value);
-    });
-    const addTarget = (path) => {
-      const normalized = normalizeFolderPath(path);
-      if (!normalized) {
-        new Notice("Folder path is required.");
-        return;
-      }
-      this.action.autoTargets = uniqueAutoTargets((this.action.autoTargets || []).concat({ path: normalized, recursive: false }));
-      this.render();
-    };
-    new FolderPathSuggest(inputEl, options, addTarget);
-    const addButton = fieldEl.createEl("button", { text: "Add folder" });
-    addButton.addClass("native-property-operator-style-066");
-    addButton.addEventListener("click", () => addTarget(pending));
+    this.addTargetSelectionSetting(contentEl, true);
   }
 
   addSpecificTargetsSetting(contentEl) {
-    const fieldEl = this.createVerticalField(contentEl, "Targets", "Add one or more folders and Markdown notes. Folder targets use direct child Markdown notes only.");
-    const targets = this.action.targets || [];
-    if (targets.length === 0) {
-      const emptyEl = fieldEl.createDiv({ text: "No specific targets." });
-      emptyEl.addClass("native-property-operator-style-067");
-      emptyEl.addClass("native-property-operator-style-068");
-    }
-    for (const [index, target] of targets.entries()) {
-      const rowEl = fieldEl.createDiv();
-      rowEl.addClass("native-property-operator-style-069");
-      rowEl.addClass("native-property-operator-style-070");
-      rowEl.addClass("native-property-operator-style-071");
-      rowEl.addClass("native-property-operator-style-072");
-      rowEl.createSpan({ text: `${target.type === TARGETS.FOLDER ? "Folder" : "File"}: ${target.path}` });
-      const removeButton = rowEl.createEl("button", { text: "Remove" });
-      removeButton.addEventListener("click", () => {
-        this.action.targets = targets.filter((_, itemIndex) => itemIndex !== index);
-        this.render();
-      });
-    }
-    const folderOptions = this.filterAvailableTargets(TARGETS.FOLDER, this.plugin.getVisibleFolders());
-    const fileOptions = this.filterAvailableTargets(TARGETS.FILE, this.plugin.getVisibleMarkdownFilePaths());
-    this.addTargetAutocomplete(fieldEl, "Add folder", "Visible vault folder path.", TARGETS.FOLDER, folderOptions);
-    this.addTargetAutocomplete(fieldEl, "Add file", "Visible Markdown note path.", TARGETS.FILE, fileOptions);
+    this.addTargetSelectionSetting(contentEl, false);
   }
 
-  addTargetAutocomplete(containerEl, label, desc, type, options) {
-    const fieldEl = this.createVerticalField(containerEl, label, desc);
-    if (options.length === 0) {
-      const emptyEl = fieldEl.createDiv({ text: `No remaining ${type === TARGETS.FOLDER ? "folder" : "file"} targets.` });
-      emptyEl.addClass("native-property-operator-style-073");
-      return;
+  addTargetSelectionSetting(contentEl, automatic) {
+    const fieldEl = this.createVerticalField(
+      contentEl,
+      "Selected targets",
+      "Folder targets include all Markdown notes in the selected folder and its subfolders. File targets match only that exact Markdown file."
+    );
+    fieldEl.addClass("npo-target-section");
+    const targets = automatic ? (this.action.autoTargets || []) : (this.action.targets || []);
+    const listEl = fieldEl.createDiv({ cls: "npo-target-list" });
+    if (targets.length === 0) {
+      listEl.createDiv({ cls: "npo-target-empty-state", text: "No targets selected." });
     }
+    for (const [index, target] of targets.entries()) {
+      const rowEl = listEl.createDiv({ cls: "npo-target-row" });
+      const label = target.type === TARGETS.FOLDER ? displayFolderPath(target.path) : target.path;
+      rowEl.createSpan({ cls: "npo-target-label", text: `${target.type === TARGETS.FOLDER ? "Folder" : "File"}: ${label}` });
+      const removeButton = rowEl.createEl("button", { text: "Remove" });
+      removeButton.addClass("npo-target-remove");
+      removeButton.addEventListener("click", () => {
+        this.setEditorTargets(targets.filter((_, itemIndex) => itemIndex !== index), automatic);
+        this.rerenderPreservingScroll();
+      });
+    }
+    const addersEl = fieldEl.createDiv({ cls: "npo-target-adders" });
+    const folderOptions = this.filterAvailableTargets(targets, TARGETS.FOLDER, this.plugin.getVisibleFolders());
+    const fileOptions = this.filterAvailableTargets(targets, TARGETS.FILE, this.plugin.getVisibleMarkdownFilePaths());
+    this.addTargetAutocomplete(addersEl, "Add folder", "Visible vault folder path. The full folder tree is included.", TARGETS.FOLDER, folderOptions, automatic);
+    this.addTargetAutocomplete(addersEl, "Add file", "Visible Markdown note path.", TARGETS.FILE, fileOptions, automatic);
+  }
+
+  setEditorTargets(targets, automatic) {
+    if (automatic) this.action.autoTargets = uniqueTargets(targets);
+    else {
+      this.action.targets = uniqueTargets(targets);
+      this.action.targetType = TARGETS.SPECIFIC_TARGETS;
+    }
+  }
+
+  addTargetAutocomplete(containerEl, label, desc, type, options, automatic) {
+    const fieldEl = this.createVerticalField(containerEl, label, desc);
+    fieldEl.addClass("npo-target-adder");
     const inputEl = this.createFullWidthInput(fieldEl, "");
     let pending = "";
     inputEl.addEventListener("input", () => {
@@ -1837,9 +1856,13 @@ class ActionEditorModal extends Modal {
         new Notice(`${label} path is required.`);
         return;
       }
-      this.action.targets = uniqueTargets((this.action.targets || []).concat({ type, path: normalized }));
-      this.action.targetType = TARGETS.SPECIFIC_TARGETS;
-      this.render();
+      const targets = automatic ? (this.action.autoTargets || []) : (this.action.targets || []);
+      if (targets.some((target) => target.type === type && target.path === normalized)) {
+        new Notice(`${type === TARGETS.FOLDER ? "Folder" : "File"} target is already selected.`);
+        return;
+      }
+      this.setEditorTargets(targets.concat({ type, path: normalized }), automatic);
+      this.rerenderPreservingScroll();
     };
     if (type === TARGETS.FOLDER) new FolderPathSuggest(inputEl, options, addTarget);
     else new MarkdownFilePathSuggest(inputEl, options, addTarget);
@@ -1848,138 +1871,14 @@ class ActionEditorModal extends Modal {
     addButton.addEventListener("click", () => addTarget(pending));
   }
 
-  filterAvailableTargets(type, options) {
-    const existing = new Set((this.action.targets || [])
+  filterAvailableTargets(targets, type, options) {
+    const existing = new Set((targets || [])
       .filter((target) => target.type === type)
       .map((target) => type === TARGETS.FOLDER ? normalizeFolderPath(target.path) : String(target.path || "").trim()));
     return options.filter((option) => {
       const normalized = type === TARGETS.FOLDER ? normalizeFolderPath(option) : String(option || "").trim();
       return normalized && !existing.has(normalized);
     });
-  }
-
-  addFileTargetSetting(contentEl) {
-    const fileOptions = this.plugin.getVisibleMarkdownFilePaths();
-    const fieldEl = this.createVerticalField(contentEl, "File path", "Vault-relative visible Markdown note path.");
-    const inputEl = this.createFullWidthInput(fieldEl, this.action.targetPath || "");
-    inputEl.addEventListener("input", () => {
-      this.action.targetPath = inputEl.value.trim();
-    });
-    inputEl.addEventListener("change", () => {
-      this.action.targetPath = inputEl.value.trim();
-      this.render();
-    });
-    new MarkdownFilePathSuggest(inputEl, fileOptions, (path) => {
-      this.action.targetPath = path;
-      inputEl.value = path;
-      this.render();
-    });
-  }
-
-  addPropertyPicker(contentEl, label, field, allowManual = true) {
-    const files = this.plugin.resolveTargetFiles(this.action, this.context);
-    const candidates = this.plugin.buildPropertyCandidates(files);
-    const current = this.action[field] || "";
-    const desc = files.length > 0
-      ? `${files.length} target note(s). Candidates combine configured and detected properties.`
-      : "Candidates combine configured and detected properties when target notes are available.";
-    const fieldEl = this.createVerticalField(contentEl, label, desc);
-    const inputEl = this.createFullWidthInput(fieldEl, current);
-    inputEl.disabled = !allowManual;
-    inputEl.addEventListener("input", () => {
-      const previousType = this.action.propertyType;
-      this.action[field] = inputEl.value.trim();
-      if (field === "propertyName") this.syncTypeFromProperty();
-      this.updateResolvedPropertyType(fieldEl);
-      if (field === "propertyName" && previousType !== this.action.propertyType && this.hasExactConfiguredProperty(this.action.propertyName)) {
-        window.setTimeout(() => this.render(), 0);
-      }
-    });
-    inputEl.addEventListener("change", () => {
-      this.action[field] = inputEl.value.trim();
-      if (field === "propertyName") this.syncTypeFromProperty();
-      this.render();
-    });
-    new PropertyInputSuggest(inputEl, candidates, (candidate) => {
-      this.chooseProperty(field, candidate.name);
-    });
-    this.updateResolvedPropertyType(fieldEl);
-  }
-
-  chooseProperty(field, value) {
-    this.action[field] = value;
-    if (field === "propertyName") this.syncTypeFromProperty();
-    this.render();
-  }
-
-  syncTypeFromProperty() {
-    this.action.propertyType = this.plugin.getPropertyType(this.action.propertyName, PROPERTY_TYPES.TEXT);
-  }
-
-  hasExactConfiguredProperty(propertyName) {
-    return this.plugin.settings.properties.some((property) => property.name === propertyName);
-  }
-
-  getSelectedPropertyCandidate() {
-    const files = this.plugin.resolveTargetFiles(this.action, this.context);
-    return this.plugin.buildPropertyCandidates(files).find((candidate) => candidate.name === this.action.propertyName);
-  }
-
-  updateResolvedPropertyType(fieldEl) {
-    if (!fieldEl) return;
-    let resolvedEl = fieldEl.querySelector(".npo-resolved-type");
-    if (!resolvedEl) {
-      resolvedEl = fieldEl.createDiv({ cls: "npo-resolved-type" });
-      resolvedEl.addClass("native-property-operator-style-075");
-      resolvedEl.addClass("native-property-operator-style-076");
-      resolvedEl.addClass("native-property-operator-style-077");
-    }
-    const candidate = this.getSelectedPropertyCandidate();
-    if (candidate) {
-      const source = candidate.configured && candidate.detectedCount > 0
-        ? "configured + detected"
-        : candidate.configured
-          ? "configured"
-          : "detected only";
-      resolvedEl.setText(`Resolved type: ${candidate.type} / ${source}`);
-      return;
-    }
-    resolvedEl.setText(`Resolved type: ${this.action.propertyType || PROPERTY_TYPES.TEXT} / manual`);
-  }
-
-  addValueEditor(contentEl) {
-    const type = this.plugin.getPropertyType(this.action.propertyName, this.action.propertyType || PROPERTY_TYPES.TEXT);
-    this.action.propertyType = type;
-
-    if (type === PROPERTY_TYPES.CHECKBOX) {
-      new Setting(contentEl)
-        .setName("Value")
-        .addToggle((toggle) => toggle.setValue(this.action.value === true || this.action.value === "true").onChange((value) => {
-          this.action.value = value;
-        }));
-      return;
-    }
-
-    if (type === PROPERTY_TYPES.LIST || type === PROPERTY_TYPES.TAGS) {
-      new Setting(contentEl)
-        .setName("Value")
-        .setDesc("Comma-separated values.")
-        .addTextArea((text) => text.setValue(Array.isArray(this.action.value) ? this.action.value.join(", ") : String(this.action.value || "")).onChange((value) => {
-          this.action.value = value;
-        }));
-      return;
-    }
-
-    new Setting(contentEl)
-      .setName(`Value (${type})`)
-      .addText((text) => {
-        text.setValue(String(this.action.value == null ? "" : this.action.value)).onChange((value) => {
-          this.action.value = value;
-        });
-        if (type === PROPERTY_TYPES.NUMBER) text.inputEl.type = "number";
-        if (type === PROPERTY_TYPES.DATE) text.inputEl.type = "date";
-        if (type === PROPERTY_TYPES.DATETIME) text.inputEl.type = "datetime-local";
-      });
   }
 
   createVerticalField(containerEl, label, desc) {
@@ -2061,21 +1960,29 @@ class PreviewModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: `Preview: ${this.action.name}` });
 
-    const counts = summarizeActionPreview(this.previewEntries);
-    contentEl.createEl("p", { text: `Files: ${counts.filesChanged} changed, ${counts.filesSkipped} skipped, ${counts.filesFailed} failed. Operations: ${counts.changed} changed, ${counts.skipped} skipped, ${counts.incompatible} incompatible, ${counts.failed} failed.` });
-
-    const list = contentEl.createEl("ul");
-    for (const entry of this.previewEntries.slice(0, 30)) {
-      list.createEl("li", { text: `${entry.status}: ${entry.path} (${entry.reason})` });
+    const previewState = buildActionPreviewState(this.previewEntries, this.action, this.context);
+    const counts = previewState.counts;
+    if (previewState.kind === "no-files") {
+      contentEl.createEl("p", { cls: "npo-preview-no-files", text: previewState.message });
+    } else {
+      contentEl.createEl("p", { text: `Files: ${counts.filesChanged} changed, ${counts.filesSkipped} skipped, ${counts.filesFailed} failed. Operations: ${counts.changed} changed, ${counts.skipped} skipped, ${counts.incompatible} incompatible, ${counts.failed} failed.` });
+      const list = contentEl.createEl("ul");
+      for (const entry of this.previewEntries.slice(0, 30)) {
+        list.createEl("li", { text: `${entry.status}: ${entry.path} (${entry.reason})` });
+      }
+      if (this.previewEntries.length > 30) contentEl.createEl("p", { text: `Showing 30 of ${this.previewEntries.length} notes.` });
     }
-    if (this.previewEntries.length > 30) contentEl.createEl("p", { text: `Showing 30 of ${this.previewEntries.length} notes.` });
 
     new Setting(contentEl)
       .addButton((button) => button.setButtonText("Close").onClick(() => this.close()))
-      .addButton((button) => button.setButtonText("Apply").setCta().onClick(() => this.apply()));
+      .addButton((button) => button.setButtonText("Apply").setCta().setDisabled(previewState.kind === "no-files").onClick(() => this.apply()));
   }
 
   async apply() {
+    if (this.previewEntries.length === 0) {
+      new Notice(buildActionPreviewState(this.previewEntries, this.action, this.context).message);
+      return;
+    }
     const counts = summarizeActionPreview(this.previewEntries);
     const hasTypeSync = this.action.operation === ACTIONS.TYPE && normalizeOperations(this.action).length > 0;
     if (counts.changed === 0 && counts.incompatible === 0 && !hasTypeSync) {
@@ -2237,6 +2144,7 @@ class InlineSuggestInput {
     this.suggestions = [];
     this.selectedIndex = 0;
     this.limit = 100;
+    this.ownerWindow = getOwnerWindow(inputEl);
     this.containerEl = inputEl.parentElement;
     this.dropdownEl = this.containerEl.createDiv();
     this.dropdownEl.addClass("native-property-operator-style-087");
@@ -2253,7 +2161,7 @@ class InlineSuggestInput {
     this.inputEl.addEventListener("focus", () => this.render());
     this.inputEl.addEventListener("keydown", (event) => this.handleKeydown(event));
     this.inputEl.addEventListener("blur", () => {
-      window.setTimeout(() => this.close(), 150);
+      this.ownerWindow.setTimeout(() => this.close(), 150);
     });
   }
 
@@ -2348,12 +2256,12 @@ class InlineSuggestInput {
     const modalEl = this.inputEl.closest(".modal-content") || this.inputEl.closest(".modal");
     const modalRect = modalEl ? modalEl.getBoundingClientRect() : {
       top: 0,
-      bottom: window.innerHeight
+      bottom: this.ownerWindow.innerHeight
     };
     const bottomGap = 24;
     const topGap = 16;
     const minimumHeight = this.minimumDropdownHeight;
-    const boundaryBottom = Math.min(window.innerHeight, modalRect.bottom);
+    const boundaryBottom = Math.min(this.ownerWindow.innerHeight, modalRect.bottom);
     const boundaryTop = Math.max(0, modalRect.top);
     const availableBelow = boundaryBottom - inputRect.bottom - bottomGap;
     const availableAbove = inputRect.top - boundaryTop - topGap;
@@ -2462,10 +2370,29 @@ function normalizeSettings(settings) {
 function needsActionMigration(settings) {
   const source = settings || {};
   if (source.propertyNames || source.savedActions || source.folderRules) return true;
+  if ((source.autoActions || []).some((action) => action && action.autoTargets == null && action.targets != null)) return true;
   return [source.manualActions, source.autoActions].some((actions) => (actions || []).some((action) => {
     if (!Array.isArray(action.operations)) return true;
-    return ["propertyName", "newPropertyName", "propertyType", "value", "valueType"].some((field) => Object.prototype.hasOwnProperty.call(action, field));
+    if (["propertyName", "newPropertyName", "propertyType", "value", "valueType"].some((field) => Object.prototype.hasOwnProperty.call(action, field))) return true;
+    if (targetsNeedMigration(action.targets) || targetsNeedMigration(action.autoTargets)) return true;
+    if (!Array.isArray(action.targets) && (action.targetFolder || action.targetPath)) return true;
+    if (Array.isArray(action.targets) && action.targets.length === 0 && (
+      action.targetType === TARGETS.FOLDER && action.targetFolder
+      || action.targetType === TARGETS.FILE && action.targetPath
+    )) return true;
+    return false;
   }));
+}
+
+function targetsNeedMigration(targets) {
+  if (targets == null) return false;
+  if (!Array.isArray(targets)) return true;
+  return targets.some((target) => {
+    if (typeof target === "string") return true;
+    if (!target || typeof target !== "object") return true;
+    if (Object.prototype.hasOwnProperty.call(target, "recursive")) return true;
+    return target.type !== TARGETS.FOLDER && target.type !== TARGETS.FILE;
+  });
 }
 
 function migrateProperties(propertyNames) {
@@ -2508,8 +2435,10 @@ function migrateActions(actions, kind) {
     migrated.overwrite = Boolean(action.overwrite);
     migrated.targetFolder = normalizeFolderPath(action.folderPath || action.targetFolder || "/");
     migrated.targetPath = String(action.targetPath || "").trim();
-    migrated.targets = normalizeTargets(action.targets || singleTargetFromLegacy(migrated));
-    migrated.autoTargets = normalizeAutoTargets(action.autoTargets || autoTargetFromLegacy(migrated));
+    const migratedTargets = action.targets != null && (!Array.isArray(action.targets) || action.targets.length > 0) ? action.targets : singleTargetFromLegacy(migrated);
+    migrated.targets = normalizeTargets(migratedTargets);
+    const legacyAutoTargets = kind === "auto" && action.autoTargets == null && action.targets != null ? action.targets : autoTargetFromLegacy(action);
+    migrated.autoTargets = normalizeAutoTargets(action.autoTargets != null ? action.autoTargets : legacyAutoTargets);
     migrated.operations = Array.isArray(action.operations) ? action.operations : null;
     if (kind === "auto" && !migrated.trigger) migrated.trigger = AUTO_TRIGGER;
     return migrated;
@@ -2549,13 +2478,20 @@ function normalizeAction(action, explicitKind = null) {
   base.id = base.id || createId();
   base.name = String(base.name || "").trim();
   base.operation = normalizeOperationName(action && (action.operation || action.action) || base.operation);
-  base.targetType = Object.values(TARGETS).includes(base.targetType) ? base.targetType : TARGETS.CURRENT_FILE;
-  base.targetFolder = normalizeFolderPath(base.targetFolder || "/");
+  base.targetType = Object.values(TARGETS).includes(action && (action.targetType || action.target) || base.targetType)
+    ? (action && (action.targetType || action.target) || base.targetType)
+    : TARGETS.CURRENT_FILE;
+  base.targetFolder = normalizeFolderPath(action && (action.folderPath || action.targetFolder) || base.targetFolder || "/");
   base.targetPath = String(base.targetPath || "").trim();
-  const incomingTargets = Array.isArray(action && action.targets) ? action.targets : singleTargetFromLegacy(base);
+  const explicitTargets = action && action.targets != null ? action.targets : null;
+  const incomingTargets = explicitTargets && (!Array.isArray(explicitTargets) || explicitTargets.length > 0) ? explicitTargets : singleTargetFromLegacy(base);
   base.targets = normalizeTargets(incomingTargets);
-  const hasAutoTargets = Array.isArray(action && action.autoTargets);
-  const incomingAutoTargets = hasAutoTargets ? action.autoTargets : autoTargetFromLegacy(action || {});
+  const hasAutoTargets = Boolean(action && action.autoTargets != null);
+  const incomingAutoTargets = hasAutoTargets
+    ? action.autoTargets
+    : kind === "auto" && action && action.targets != null
+      ? action.targets
+      : autoTargetFromLegacy(action || {});
   base.autoTargets = normalizeAutoTargets(incomingAutoTargets);
   if (!base.trigger && base.targets.length > 0) base.targetType = TARGETS.SPECIFIC_TARGETS;
   base.operations = Array.isArray(action && action.operations) ? action.operations : null;
@@ -2711,12 +2647,21 @@ function singleTargetFromLegacy(action) {
 }
 
 function normalizeTargets(targets) {
-  return uniqueTargets((targets || []).map((target) => {
-    const type = target.type === TARGETS.FOLDER ? TARGETS.FOLDER : target.type === TARGETS.FILE ? TARGETS.FILE : "";
+  const targetList = Array.isArray(targets) ? targets : targets == null ? [] : [targets];
+  return uniqueTargets(targetList.map((target) => {
+    const source = typeof target === "string" ? { type: TARGETS.FOLDER, path: target } : target;
+    if (!source || typeof source !== "object") return null;
+    const type = source.type === TARGETS.FILE
+      ? TARGETS.FILE
+      : source.type === TARGETS.FOLDER || !source.type
+        ? TARGETS.FOLDER
+        : "";
     if (!type) return null;
-    const path = type === TARGETS.FOLDER ? normalizeFolderPath(target.path) : String(target.path || "").trim();
+    const path = type === TARGETS.FOLDER ? normalizeFolderPath(source.path) : String(source.path || "").trim();
     if (!path) return null;
-    return { type, path };
+    const normalized = Object.assign({}, source, { type, path });
+    delete normalized.recursive;
+    return normalized;
   }).filter(Boolean));
 }
 
@@ -2733,28 +2678,13 @@ function uniqueTargets(targets) {
 }
 
 function autoTargetFromLegacy(action) {
-  if (!action.targetFolder) return [];
-  return [{ path: normalizeFolderPath(action.targetFolder), recursive: false }];
+  const folderPath = action && (action.folderPath || action.targetFolder);
+  if (!folderPath) return [];
+  return [{ type: TARGETS.FOLDER, path: normalizeFolderPath(folderPath) }];
 }
 
 function normalizeAutoTargets(targets) {
-  return uniqueAutoTargets((targets || []).map((target) => {
-    const path = normalizeFolderPath(target.path);
-    if (!path) return null;
-    return { path, recursive: Boolean(target.recursive) };
-  }).filter(Boolean));
-}
-
-function uniqueAutoTargets(targets) {
-  const seen = new Set();
-  const result = [];
-  for (const target of targets || []) {
-    const path = normalizeFolderPath(target.path);
-    if (seen.has(path)) continue;
-    seen.add(path);
-    result.push({ path, recursive: Boolean(target.recursive) });
-  }
-  return result;
+  return normalizeTargets(targets);
 }
 
 function validateAction(action, kind) {
@@ -2791,7 +2721,7 @@ function validateAction(action, kind) {
       }
     }
   }
-  if (kind === "auto" && (!action.autoTargets || action.autoTargets.length === 0)) return "Add at least one target folder.";
+  if (kind === "auto" && (!action.autoTargets || action.autoTargets.length === 0)) return "Add at least one target.";
   if (kind !== "auto" && action.targetType === TARGETS.SPECIFIC_TARGETS && (!action.targets || action.targets.length === 0)) {
     return "Add at least one target.";
   }
@@ -2887,6 +2817,23 @@ function summarizeActionPreview(entries) {
   return counts;
 }
 
+function buildActionPreviewState(entries, action, context = null) {
+  const counts = summarizeActionPreview(entries);
+  if (!entries || entries.length === 0) {
+    const targetDetails = context && context.label
+      ? context.label
+      : action && action.trigger
+        ? displayAutoTargets(action)
+        : displayTarget(action || {});
+    return {
+      kind: "no-files",
+      counts,
+      message: `No Markdown files matched the selected targets. Targets: ${targetDetails}.`
+    };
+  }
+  return { kind: "files-resolved", counts, message: "" };
+}
+
 function displayInitialSyncResult(action) {
   if (!action.lastInitialSyncResult) return "";
   return ` - Last existing-note sync: ${displayResult(action.lastInitialSyncResult)}`;
@@ -2919,13 +2866,14 @@ function displayTarget(action) {
 
 function displayAutoTargets(action) {
   const targets = action.autoTargets || [];
-  if (targets.length === 0) return "No target folders";
+  if (targets.length === 0) return "No targets";
   if (targets.length === 1) {
     const target = targets[0];
-    return `Folder: ${displayFolderPath(target.path)}${target.recursive ? " include subfolders" : ""}`;
+    return `${target.type === TARGETS.FILE ? "File" : "Folder"}: ${target.type === TARGETS.FILE ? target.path : displayFolderPath(target.path)}`;
   }
-  const recursiveCount = targets.filter((target) => target.recursive).length;
-  return recursiveCount > 0 ? `Folders: ${targets.length}, include subfolders: ${recursiveCount}` : `Folders: ${targets.length}`;
+  const folderCount = targets.filter((target) => target.type === TARGETS.FOLDER).length;
+  const fileCount = targets.filter((target) => target.type === TARGETS.FILE).length;
+  return `Folders: ${folderCount}, Files: ${fileCount}`;
 }
 
 function displayFolderPath(path) {
@@ -2934,6 +2882,24 @@ function displayFolderPath(path) {
 
 function formatCandidate(candidate) {
   return `${candidate.name} - ${propertyCandidateNote(candidate)}`;
+}
+
+function filterExistingPropertyCandidates(candidates, query = "", catalogNames = []) {
+  const catalog = new Set((catalogNames || []).map((name) => String(name || "")));
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
+  return (candidates || [])
+    .filter((candidate) => candidate && candidate.name && !catalog.has(candidate.name))
+    .filter((candidate) => {
+      if (!normalizedQuery) return true;
+      return formatExistingPropertyCandidate(candidate).toLocaleLowerCase().includes(normalizedQuery);
+    })
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.name.localeCompare(b.name));
+}
+
+function formatExistingPropertyCandidate(candidate) {
+  const examples = candidate.examples && candidate.examples.length > 0 ? ` — examples: ${candidate.examples.join(", ")}` : "";
+  return `${candidate.name} — ${candidate.inferredType} — appears in ${candidate.count} file(s)${examples}`;
 }
 
 function propertyCandidateNote(candidate) {
@@ -3275,6 +3241,67 @@ function normalizePathInput(value) {
   return String(value || "").trim().replace(/^\/+|\/+$/g, "");
 }
 
+function getOwnerWindow(element) {
+  const ownerWindow = element && element.ownerDocument && element.ownerDocument.defaultView;
+  if (ownerWindow) return ownerWindow;
+  return globalThis.window || globalThis;
+}
+
+function getModalScrollContainer(contentEl) {
+  if (!contentEl) return null;
+  return contentEl.closest && contentEl.closest(".modal-content") || contentEl;
+}
+
+function captureModalScrollState(contentEl) {
+  const scrollEl = getModalScrollContainer(contentEl);
+  if (!scrollEl) return null;
+  const anchorEl = contentEl.querySelector && contentEl.querySelector(".npo-operation-section");
+  const scrollRect = scrollEl.getBoundingClientRect ? scrollEl.getBoundingClientRect() : { top: 0 };
+  const anchorRect = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : null;
+  return {
+    scrollTop: Number(scrollEl.scrollTop) || 0,
+    anchorOffset: anchorRect ? anchorRect.top - scrollRect.top : null
+  };
+}
+
+function restoreModalScrollState(contentEl, state) {
+  if (!state) return;
+  const scrollEl = getModalScrollContainer(contentEl);
+  if (!scrollEl) return;
+  scrollEl.scrollTop = state.scrollTop;
+  if (state.anchorOffset == null) return;
+  const anchorEl = contentEl.querySelector && contentEl.querySelector(".npo-operation-section");
+  if (!anchorEl || !anchorEl.getBoundingClientRect || !scrollEl.getBoundingClientRect) return;
+  const currentOffset = anchorEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+  scrollEl.scrollTop += currentOffset - state.anchorOffset;
+}
+
+function focusWithoutScroll(inputEl) {
+  if (!inputEl || typeof inputEl.focus !== "function") return;
+  try {
+    inputEl.focus({ preventScroll: true });
+  } catch (_error) {
+    inputEl.focus();
+  }
+}
+
+function revealOperationCardWithoutJump(contentEl, cardEl, inputEl) {
+  if (cardEl && typeof cardEl.scrollIntoView === "function") cardEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+  focusWithoutScroll(inputEl);
+  return getModalScrollContainer(contentEl);
+}
+
+function scheduleModalScrollRestore(contentEl, state, afterRestore = null) {
+  if (!state && !afterRestore) return;
+  const ownerWindow = getOwnerWindow(contentEl);
+  const restore = () => {
+    restoreModalScrollState(contentEl, state);
+    if (afterRestore) afterRestore();
+  };
+  if (ownerWindow && typeof ownerWindow.requestAnimationFrame === "function") ownerWindow.requestAnimationFrame(restore);
+  else restore();
+}
+
 function normalizeFolderPath(value) {
   const raw = String(value || "").trim();
   if (!raw || raw === "/") return "/";
@@ -3290,9 +3317,16 @@ function parentPathFromPath(path) {
 function folderTargetMatchesPath(target, parentPath) {
   const targetPath = normalizeFolderPath(target.path);
   const normalizedParent = normalizeFolderPath(parentPath);
-  if (!target.recursive) return normalizedParent === targetPath;
   if (targetPath === "/") return true;
   return normalizedParent === targetPath || normalizedParent.startsWith(`${targetPath}/`);
+}
+
+function targetMatchesPath(target, filePath) {
+  const normalizedFilePath = String(filePath || "").replace(/^\/+/, "");
+  if (!target || !normalizedFilePath) return false;
+  if (target.type === TARGETS.FILE) return normalizedFilePath === String(target.path || "").replace(/^\/+/, "");
+  if (target.type !== TARGETS.FOLDER) return false;
+  return folderTargetMatchesPath(target, parentPathFromPath(normalizedFilePath));
 }
 
 function uniqueStrings(values) {
@@ -3308,14 +3342,24 @@ export {
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
+  buildActionPreviewState,
   buildOperationEditorModel,
+  captureModalScrollState,
   convertOperationsForOperation,
   createEmptyAction,
   defaultOperation,
   emptyResult,
   evaluateOperations,
+  filterExistingPropertyCandidates,
+  focusWithoutScroll,
+  folderTargetMatchesPath,
   normalizeAction,
+  normalizeAutoTargets,
   normalizeSettings,
   normalizeOperations,
+  normalizeTargets,
+  restoreModalScrollState,
+  revealOperationCardWithoutJump,
+  targetMatchesPath,
   validateAction
 };

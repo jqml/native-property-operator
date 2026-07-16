@@ -473,6 +473,8 @@
 
 .npo-operation-card-fields .setting-item-control {
   flex: 1 1 50%;
+  justify-content: flex-start;
+  margin-left: 0;
 }
 
 .npo-operation-card-fields .npo-suggest-wrapper,
@@ -515,6 +517,144 @@
   border-top: 0;
 }
 
+.npo-operation-selector,
+.npo-target-selector {
+  display: block;
+}
+
+.npo-operation-selector .setting-item-info,
+.npo-target-selector .setting-item-info {
+  margin-bottom: 6px;
+}
+
+.npo-operation-selector-control,
+.npo-target-selector-control {
+  justify-content: flex-start;
+  width: auto;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.npo-operation-selector-control select,
+.npo-target-selector-control select,
+.npo-operation-card-fields select {
+  width: auto;
+  max-width: 100%;
+}
+
+.npo-target-section,
+.npo-target-list,
+.npo-target-adders,
+.npo-target-adder {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.npo-target-list {
+  display: grid;
+  gap: 8px;
+}
+
+.npo-target-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.npo-target-label {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.npo-target-remove {
+  flex: 0 0 auto;
+}
+
+.npo-target-empty-state {
+  padding: 8px 0;
+  color: var(--text-muted);
+}
+
+.npo-target-adders {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.npo-target-adder .npo-suggest-wrapper,
+.npo-target-adder input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.npo-existing-property-browser {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.npo-existing-property-search {
+  display: block;
+  position: relative;
+  z-index: 1;
+  background: var(--background-primary);
+}
+
+.npo-existing-property-search .setting-item-info {
+  margin-bottom: 6px;
+}
+
+.npo-existing-property-search .setting-item-control,
+.npo-existing-property-search input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.npo-existing-property-results {
+  max-height: min(60vh, 520px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.npo-existing-property-result {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-normal);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.npo-existing-property-result:hover,
+.npo-existing-property-result-selected {
+  background: var(--background-modifier-hover);
+}
+
+.npo-existing-property-empty,
+.npo-preview-no-files {
+  padding: 12px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 600px) {
   .npo-operation-card-fields .setting-item {
     flex-direction: column;
@@ -524,6 +664,14 @@
 
   .npo-operation-card-fields .setting-item-info,
   .npo-operation-card-fields .setting-item-control {
+    width: 100%;
+  }
+
+  .npo-operation-selector-control,
+  .npo-target-selector-control,
+  .npo-operation-selector-control select,
+  .npo-target-selector-control select,
+  .npo-operation-card-fields select {
     width: 100%;
   }
 }

@@ -11,10 +11,11 @@ The plugin only targets visible Markdown notes. It ignores the Obsidian configur
 ## Features
 
 - Maintain a property catalog with native property types.
-- Add existing detected frontmatter properties to the catalog with conservative type inference.
+- Browse every uncataloged detected frontmatter property in an alphabetized, scrollable browser with conservative type inference.
 - Preview and apply catalog name/type changes.
 - Create saved manual actions for adding, removing, renaming, setting values, or changing types for multiple properties.
-- Create auto actions with the same typed multi-property rows; they run when Markdown notes are created in or moved into target folders.
+- Select multiple exact files and folder trees in one action. Every folder includes all eligible Markdown descendants; `/` means the full visible vault.
+- Create auto actions with the same typed targets and multi-property rows; they run when matching Markdown notes are created or moved.
 - Preview changes before applying them.
 - Report changed, skipped, and failed counts with reasons.
 - Confirm multi-file operations and overwrite operations.
@@ -33,11 +34,13 @@ The plugin only targets visible Markdown notes. It ignores the Obsidian configur
 
 The catalog stores property names and their intended native Obsidian property type. Catalog changes use draft editing: change the name or type, then choose **Apply changes...** to preview affected notes before writing frontmatter. **Revert** restores the saved catalog values in the editor. **Delete from catalog** removes the catalog entry only and does not change notes.
 
+**Add existing property** opens a full browser. A blank search shows every eligible uncataloged property in case-insensitive alphabetical order; the result area scrolls independently and supports Arrow, Page, Home, End, Enter, and Escape keys. Inline action-field suggestions remain compact.
+
 When changing a catalog property name, destination conflicts are skipped by default. If overwrite is enabled, existing destination values may be replaced after confirmation. Type-only catalog changes update the catalog unless value normalization is explicitly enabled.
 
 ## Manual actions
 
-Saved manual actions can target the current file, the current folder, or specific files and folders. Folder targets apply to direct child Markdown notes. Manual actions support:
+Saved manual actions can target the current file, the current folder tree, or multiple specific files and folders. A folder always includes every eligible Markdown note below it at every depth. The root target `/` includes all visible eligible Markdown notes in the vault. Manual actions support:
 
 - Add property
 - Remove property
@@ -47,15 +50,17 @@ Saved manual actions can target the current file, the current folder, or specifi
 
 Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
 
-The manual and automatic action editors display each operation as an ordered property card. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards.
+The manual and automatic action editors share ordered target rows and property cards. Every target and property remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
+
+Remove actions inspect current frontmatter and match exact property keys. Removing `title` does not remove `Title` or similarly named keys. All configured operations for one note run inside one `processFrontMatter` callback, preserving unrelated frontmatter.
 
 Before applying a manual action, the plugin shows a preview with changed and skipped notes. Applying multiple files asks for confirmation. If overwrite is enabled and overwrite confirmation is on, the plugin asks for an additional confirmation.
 
 ## Auto actions
 
-Auto actions run only when a Markdown note is created in or moved into a configured target folder. They do not run on ordinary note modification.
+Auto actions run only when a matching Markdown note is created or moved into a configured folder tree or exact file target. They do not run on ordinary note modification.
 
-Each auto target is a folder and may include subfolders. Without **Include subfolders**, only notes directly inside the target folder match. With **Include subfolders**, notes in nested folders also match. Vault root (`/`) with **Include subfolders** matches all visible Markdown notes in the vault.
+Automatic actions use the same ordered file/folder target schema as manual actions. There is no direct-child mode or recursive toggle: selecting a folder always selects its complete descendant tree, and `/` matches the complete visible vault.
 
 When enabling an auto action for the first time, the plugin can preview synchronization for existing matching notes before enabling future automation. You can also run **Sync existing notes** from the auto action list.
 
@@ -84,17 +89,43 @@ npm run build
 
 The production build writes `main.js`.
 
-### Manual action-editor smoke test
+### Manual runtime smoke checklist
 
-- Open a new manual Add property action and confirm one clean **Property 1** card.
-- Enter a property name, type, and value; choose **Add property** and confirm **Property 2** appears below it.
-- Remove Property 1 and confirm the remaining card renumbers cleanly without losing its values.
-- Confirm **Overwrite existing values** remains below the complete card list; save, reopen, and verify both row order and values persist.
-- Repeat the card/add/remove flow for Remove, Set/change value, Rename, and Change type actions.
-- Repeat in the automatic action editor and confirm target folders, recursive controls, and action-level options remain outside property cards.
-- At a narrow modal width, verify headers wrap, fields stack, dropdowns remain visible, and no Value or Remove controls overlap.
+Targets:
+
+- Open a manual action; add Folder `/`, another folder, and one file, confirming all selected targets remain visible.
+- Remove one target and confirm the others remain in their original order.
+- Preview Folder `/` and confirm eligible nested notes at every depth are included.
+
+Properties:
+
+- Select Remove property; add `heroImage`, `pubDate`, `status`, and `title` as four visible cards.
+- Remove one middle card and confirm the others remain, renumber cleanly, and retain their values.
+- Confirm Operation and Type controls align left with no overlap; save, reopen, and confirm rows persist.
+
+Scroll:
+
+- Scroll to lower property cards, add a property, and confirm the modal stays near the property section with the new card visible.
+- Remove a middle card and change a Type; confirm each rerender preserves the nearby viewport.
+
+Removal:
+
+- Target a note containing `title`, `status`, and an unrelated property; preview and confirm one changed file and two changed operations for removal of `title` and `status`.
+- Apply and confirm those exact keys are removed while unrelated and differently cased keys remain.
+
+Add existing property:
+
+- Open **Add existing property** with a blank query; confirm all eligible uncataloged properties appear alphabetically and the result list scrolls to the bottom.
+- Test Page Down and End, search for one property, select it, and confirm it is added to the catalog.
+
+Automatic actions:
+
+- Confirm the same target rows and property-card layout, all-descendant folder behavior, skipped automatic overwrite conflicts, and no modify trigger.
+
+Responsive layout:
+
+- At a narrow modal width, verify target rows and card headers wrap, fields stack, dropdowns remain visible, and the footer is not clipped.
 - Check long property names, List and Tags textareas, Date and Date & time controls, and selected folder/file target rows.
-- Confirm the final operation card is fully visible above the dedicated Cancel/Save footer and invalid actions remain blocked from saving.
 
 ## License
 
