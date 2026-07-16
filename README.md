@@ -50,7 +50,7 @@ Saved manual actions can target the current file, the current folder tree, or mu
 
 Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
 
-The manual and automatic action editors share ordered target rows and property cards. Every target and property remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Compact property, folder, and file suggestions align to the input's left edge, with property metadata beneath the candidate name. Property suggestions omit exact-case source names already selected in another row of the same action while retaining the focused row's own value. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
+The manual and automatic action editors share ordered target rows and property cards. Every target and property remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Compact property, folder, and file suggestions align to the input's left edge and use a neutral theme-native popup surface. Candidate names and complete property metadata wrap in content-sized rows, while long result lists scroll independently with mouse, trackpad, touch, and keyboard navigation. Property suggestions omit exact-case source names already selected in another row of the same action while retaining the focused row's own value. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
 
 Remove actions inspect current frontmatter and match exact property keys. Removing `title` does not remove `Title` or similarly named keys. All configured operations for one note run inside one `processFrontMatter` callback, preserving unrelated frontmatter.
 
@@ -105,13 +105,15 @@ Properties:
 
 Inline suggestions:
 
-- Open a manual Remove property action, add at least four property cards, and focus an empty Property field.
-- Confirm candidate names are left-aligned, metadata appears beneath each name and is left-aligned, and the popup's left edge aligns with the input.
-- Confirm properties selected in other rows are absent; choose a candidate and confirm the popup closes without jumping the modal.
-- Focus another row and confirm the newly selected property is absent. Remove the first row and confirm its property becomes available again.
+- Open a manual Remove property action and focus an empty Property field.
+- In both light and dark themes, confirm the popup uses a neutral native surface and unselected candidates have no persistent filled-button background.
+- Hover a candidate, then move with Arrow Down; confirm only the hovered or keyboard-selected row uses the darker highlight.
+- Confirm every property name and its complete metadata are visible on separate lines, including long wrapping content, with no clipping or row overlap.
+- Use enough candidates to exceed the popup height. Scroll with a mouse wheel and trackpad, confirming the popup scrolls instead of the modal behind it.
+- Navigate with Arrow, Page, Home, and End keys and confirm the selected row remains visible. Press Enter to select and Escape to close.
+- Confirm properties selected in other rows are absent. Select a candidate, confirm the popup closes without jumping, then remove that row and confirm its property becomes available again.
 - Type a duplicate property manually and confirm validation blocks saving.
-- Test folder and file suggestions, a narrow modal width, and confirm each popup remains inside the modal or active window.
-- Repeat the same checks in the automatic action editor.
+- Repeat the appearance, wrapping, scrolling, and navigation checks with folder suggestions, file suggestions, the automatic action editor, and a narrow modal width.
 
 Scroll:
 

@@ -48,11 +48,13 @@ const {
   buildActionPreviewState,
   buildOperationEditorModel,
   calculateInlineSuggestHorizontalGeometry,
+  calculateInlineSuggestVerticalGeometry,
   captureModalScrollState,
   convertOperationsForOperation,
   emptyResult,
   evaluateOperations,
   filterExistingPropertyCandidates,
+  filterInlineSuggestItems,
   filterOperationPropertyCandidates,
   focusWithoutScroll,
   getUnavailablePropertyNames,
@@ -605,6 +607,29 @@ const leftClampedPopup = calculateInlineSuggestHorizontalGeometry(
   800
 );
 assert.deepEqual(leftClampedPopup, { left: 20, width: 200 }, "inline popup shifts inside the modal when an input extends beyond its left boundary");
+const downwardPopup = calculateInlineSuggestVerticalGeometry(
+  { top: 100, bottom: 130 },
+  { top: 20, bottom: 760 },
+  800,
+  600,
+  120
+);
+assert.deepEqual(downwardPopup, { opensUp: false, maxHeight: 440 }, "popup height uses available modal space and the 55vh viewport cap");
+const upwardPopup = calculateInlineSuggestVerticalGeometry(
+  { top: 620, bottom: 650 },
+  { top: 40, bottom: 700 },
+  800,
+  600,
+  120
+);
+assert.deepEqual(upwardPopup, { opensUp: true, maxHeight: 440 }, "popup opens upward and remains viewport-capped when space below is insufficient");
+const manyInlineCandidates = Array.from({ length: 120 }, (_, index) => ({ name: `Property ${String(index).padStart(3, "0")}` }));
+assert.equal(filterInlineSuggestItems(manyInlineCandidates, (item) => item.name, "").length, 120, "at least 100 inline candidates remain available without compact truncation");
+assert.deepEqual(
+  filterInlineSuggestItems(manyInlineCandidates, (item) => item.name, "PROPERTY 119").map((item) => item.name),
+  ["Property 119"],
+  "long inline suggestion sources retain case-insensitive filtering"
+);
 
 let anchorTop = 120;
 const scrollEl = {
@@ -682,18 +707,53 @@ assert.match(inlineSuggestSource, /createEl\("button", \{ cls: "npo-inline-sugge
 assert.ok(inlineSuggestSource.indexOf('cls: "npo-inline-suggest-title"') < inlineSuggestSource.indexOf('cls: "npo-inline-suggest-meta"'), "metadata is constructed beneath the candidate title");
 assert.match(inlineSuggestSource, /this\.ownerWindow\.innerWidth/, "popup geometry uses the input owner window rather than the global window");
 assert.match(inlineSuggestSource, /calculateInlineSuggestHorizontalGeometry/);
+assert.match(inlineSuggestSource, /calculateInlineSuggestVerticalGeometry/);
 assert.doesNotMatch(inlineSuggestSource, /right:\s*`|style\.right|setCssStyles\(\{[^}]*right:/s, "popup positioning never defaults to a right-edge coordinate");
+assert.doesNotMatch(inlineSuggestSource, /slice\(0,\s*this\.limit\)|this\.limit\s*=/, "inline results are not arbitrarily truncated before scrolling");
+assert.doesNotMatch(inlineSuggestSource, /addEventListener\(["']wheel|onwheel|wheel[\s\S]{0,120}preventDefault/, "wheel scrolling retains the browser default behavior");
+for (const key of ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", "Enter", "Escape"]) assert.match(inlineSuggestSource, new RegExp(`"${key}"`));
+assert.match(inlineSuggestSource, /scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\)/, "keyboard selection remains visible in the popup scroll container");
 for (const suggestionClass of ["PropertyInputSuggest", "FolderPathSuggest", "MarkdownFilePathSuggest"]) {
   const classStart = inlineSuggestSource.indexOf(`class ${suggestionClass}`);
   assert.ok(classStart >= 0, `${suggestionClass} uses the shared inline suggestion implementation`);
 }
 const inlineStyles = styles.slice(styles.indexOf(".npo-inline-suggest {"), styles.indexOf(".npo-action-editor-content"));
 assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*right:\s*auto/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*background:\s*var\(--background-primary\)/s);
 assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*overflow-x:\s*hidden/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*overflow-y:\s*auto/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*overscroll-behavior:\s*contain/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*scrollbar-gutter:\s*stable/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*pointer-events:\s*auto/s);
+assert.match(inlineStyles, /\.npo-inline-suggest\s*\{[^}]*touch-action:\s*pan-y/s);
 assert.match(inlineStyles, /\.npo-inline-suggest-item\s*\{[^}]*width:\s*100%/s);
 assert.match(inlineStyles, /\.npo-inline-suggest-item\s*\{[^}]*text-align:\s*left/s);
 assert.match(inlineStyles, /\.npo-inline-suggest-title,[^}]*text-align:\s*left/s);
 assert.match(inlineStyles, /\.npo-inline-suggest-meta\s*\{[^}]*color:\s*var\(--text-muted\)/s);
+const inlineItemRule = inlineStyles.match(/\.npo-inline-suggest \.npo-inline-suggest-item\s*\{([^}]*)\}/s)[1];
+for (const declaration of [
+  /appearance:\s*none/,
+  /display:\s*flex/,
+  /flex-direction:\s*column/,
+  /height:\s*auto/,
+  /min-height:\s*0/,
+  /max-height:\s*none/,
+  /overflow:\s*visible/,
+  /border:\s*0/,
+  /background:\s*transparent/,
+  /background-image:\s*none/,
+  /box-shadow:\s*none/,
+  /color:\s*var\(--text-normal\)/
+]) assert.match(inlineItemRule, declaration);
+assert.doesNotMatch(inlineItemRule, /overflow:\s*hidden|text-overflow:\s*ellipsis/);
+const inlineSelectionRules = inlineStyles.match(/\.npo-inline-suggest \.npo-inline-suggest-item:hover,[\s\S]*?\{([^}]*)\}/)[1];
+assert.match(inlineSelectionRules, /background:\s*var\(--background-modifier-hover\)/, "only hover and keyboard-selected rows use the native highlight surface");
+const inlineContentRules = inlineStyles.match(/\.npo-inline-suggest \.npo-inline-suggest-title,[\s\S]*?\{([^}]*)\}/)[1];
+assert.match(inlineContentRules, /display:\s*block/);
+assert.match(inlineContentRules, /overflow:\s*visible/);
+assert.match(inlineContentRules, /overflow-wrap:\s*anywhere/);
+assert.match(inlineContentRules, /white-space:\s*normal/);
+assert.doesNotMatch(inlineContentRules, /position:\s*absolute|line-clamp|text-overflow:\s*ellipsis/);
 assert.doesNotMatch(inlineStyles, /justify-content:\s*space-between|margin-left:\s*auto/);
 assert.doesNotMatch(styles, /(^|\n)button\s*\{|(^|\n)\.setting-item(-control)?\s*\{/m, "inline alignment does not introduce global button or Setting rules");
 assert.doesNotMatch(operationEditorSource, /npo-inline-suggest-item|npo-inline-suggest-opens-/, "operation cards never receive popup item or absolute-position classes");

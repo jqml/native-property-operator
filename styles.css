@@ -346,21 +346,25 @@
   z-index: 1000;
   display: none;
   right: auto;
+  min-height: 0;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  pointer-events: auto;
+  touch-action: pan-y;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   background: var(--background-primary);
   box-shadow: var(--shadow-s);
+  color: var(--text-normal);
   text-align: left;
 }
 
 .npo-inline-suggest-list {
-  justify-content: flex-start;
-  align-items: stretch;
   text-align: left;
 }
 
@@ -368,43 +372,62 @@
   display: block;
 }
 
-.npo-inline-suggest-item {
-  display: block;
+.npo-inline-suggest .npo-inline-suggest-item {
+  appearance: none;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 2px;
   width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
   min-width: 0;
-  padding: 6px 8px;
-  overflow: hidden;
+  margin: 0;
+  padding: 7px 9px;
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: transparent;
+  background-color: transparent;
+  background-image: none;
   box-shadow: none;
-  color: inherit;
+  color: var(--text-normal);
   cursor: pointer;
+  line-height: normal;
   text-align: left;
   white-space: normal;
 }
 
-.npo-inline-suggest-item:hover,
-.npo-inline-suggest-item-selected {
+.npo-inline-suggest .npo-inline-suggest-item:hover,
+.npo-inline-suggest .npo-inline-suggest-item-selected {
   background: var(--background-modifier-hover);
+  background-image: none;
+  box-shadow: none;
 }
 
-.npo-inline-suggest-title,
-.npo-inline-suggest-meta {
+.npo-inline-suggest .npo-inline-suggest-title,
+.npo-inline-suggest .npo-inline-suggest-meta {
+  position: static;
   display: block;
   width: 100%;
   min-width: 0;
+  max-height: none;
+  overflow: visible;
   overflow-wrap: anywhere;
+  line-height: normal;
   text-align: left;
+  text-overflow: clip;
   white-space: normal;
 }
 
-.npo-inline-suggest-title {
+.npo-inline-suggest .npo-inline-suggest-title {
   font-weight: 500;
 }
 
-.npo-inline-suggest-meta {
-  margin-top: 2px;
+.npo-inline-suggest .npo-inline-suggest-meta {
   color: var(--text-muted);
   font-size: 12px;
 }

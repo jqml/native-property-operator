@@ -2165,7 +2165,6 @@ class InlineSuggestInput {
     this.minimumDropdownHeight = options.minimumDropdownHeight || 120;
     this.suggestions = [];
     this.selectedIndex = 0;
-    this.limit = 100;
     this.ownerWindow = getOwnerWindow(inputEl);
     this.containerEl = inputEl.parentElement;
     this.dropdownEl = this.containerEl.createDiv({ cls: "npo-inline-suggest npo-inline-suggest-list" });
@@ -2179,14 +2178,7 @@ class InlineSuggestInput {
   }
 
   getSuggestions(query) {
-    const normalizedQuery = String(query || "").trim().toLowerCase();
-    const items = this.getItems();
-    return items
-      .filter((item) => {
-        const text = this.getText(item).toLowerCase();
-        return !normalizedQuery || text.includes(normalizedQuery);
-      })
-      .slice(0, this.limit);
+    return filterInlineSuggestItems(this.getItems(), this.getText, query);
   }
 
   render() {
@@ -2203,11 +2195,11 @@ class InlineSuggestInput {
     for (const [index, item] of this.suggestions.entries()) {
       const itemEl = this.dropdownEl.createEl("button", { cls: "npo-inline-suggest-item", type: "button" });
       itemEl.toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
-      itemEl.createDiv({ cls: "npo-inline-suggest-title", text: this.getText(item) });
+      itemEl.createSpan({ cls: "npo-inline-suggest-title", text: this.getText(item) });
       if (this.getNote) {
         const note = this.getNote(item);
         if (note) {
-          itemEl.createDiv({ cls: "npo-inline-suggest-meta", text: note });
+          itemEl.createSpan({ cls: "npo-inline-suggest-meta", text: note });
         }
       }
       itemEl.addEventListener("mousedown", (event) => {
@@ -2228,22 +2220,26 @@ class InlineSuggestInput {
       return;
     }
     if (this.suggestions.length === 0) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      this.selectedIndex = Math.min(this.selectedIndex + 1, this.suggestions.length - 1);
-      this.renderSelection();
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
-      this.renderSelection();
-    }
+    const navigationKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"];
+    if (!navigationKeys.includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "ArrowDown") this.selectedIndex = Math.min(this.selectedIndex + 1, this.suggestions.length - 1);
+    else if (event.key === "ArrowUp") this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
+    else if (event.key === "PageDown") this.selectedIndex = Math.min(this.selectedIndex + 10, this.suggestions.length - 1);
+    else if (event.key === "PageUp") this.selectedIndex = Math.max(this.selectedIndex - 10, 0);
+    else if (event.key === "Home") this.selectedIndex = 0;
+    else if (event.key === "End") this.selectedIndex = this.suggestions.length - 1;
+    this.renderSelection();
   }
 
   renderSelection() {
     const items = this.dropdownEl.children;
     for (let index = 0; index < items.length; index += 1) {
       items[index].toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
+    }
+    const selectedEl = items[this.selectedIndex];
+    if (selectedEl && typeof selectedEl.scrollIntoView === "function") {
+      selectedEl.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }
 
@@ -2270,28 +2266,25 @@ class InlineSuggestInput {
       top: 0,
       bottom: this.ownerWindow.innerHeight
     };
-    const bottomGap = 24;
-    const topGap = 16;
-    const minimumHeight = this.minimumDropdownHeight;
-    const boundaryBottom = Math.min(this.ownerWindow.innerHeight, modalRect.bottom);
-    const boundaryTop = Math.max(0, modalRect.top);
-    const availableBelow = boundaryBottom - inputRect.bottom - bottomGap;
-    const availableAbove = inputRect.top - boundaryTop - topGap;
-    const opensUp = availableBelow < minimumHeight && availableAbove > availableBelow;
-    const available = opensUp ? availableAbove : availableBelow;
-    const maxHeight = Math.min(this.maxDropdownHeight, Math.max(minimumHeight, available));
+    const vertical = calculateInlineSuggestVerticalGeometry(
+      inputRect,
+      modalRect,
+      this.ownerWindow.innerHeight,
+      this.maxDropdownHeight,
+      this.minimumDropdownHeight
+    );
     const horizontal = calculateInlineSuggestHorizontalGeometry(
       inputRect,
       containerRect,
       modalRect,
       this.ownerWindow.innerWidth
     );
-    this.dropdownEl.toggleClass("npo-inline-suggest-opens-up", opensUp);
-    this.dropdownEl.toggleClass("npo-inline-suggest-opens-down", !opensUp);
+    this.dropdownEl.toggleClass("npo-inline-suggest-opens-up", vertical.opensUp);
+    this.dropdownEl.toggleClass("npo-inline-suggest-opens-down", !vertical.opensUp);
     this.dropdownEl.setCssStyles({
       left: `${horizontal.left}px`,
       width: `${horizontal.width}px`,
-      maxHeight: `${maxHeight}px`
+      maxHeight: `${vertical.maxHeight}px`
     });
   }
 }
@@ -3341,6 +3334,34 @@ function calculateInlineSuggestHorizontalGeometry(inputRect, containerRect, moda
   return { left: popupLeft - containerLeft, width: popupWidth };
 }
 
+function calculateInlineSuggestVerticalGeometry(inputRect, modalRect, viewportHeight, preferredMaximum, minimumHeight) {
+  const viewportBottom = Math.max(0, Number(viewportHeight) || 0);
+  const boundaryTop = Math.max(0, Number.isFinite(modalRect && modalRect.top) ? modalRect.top : 0);
+  const boundaryBottom = Math.min(
+    viewportBottom,
+    Number.isFinite(modalRect && modalRect.bottom) ? modalRect.bottom : viewportBottom
+  );
+  const inputTop = Number.isFinite(inputRect && inputRect.top) ? inputRect.top : boundaryTop;
+  const inputBottom = Number.isFinite(inputRect && inputRect.bottom) ? inputRect.bottom : inputTop;
+  const availableBelow = Math.max(0, boundaryBottom - inputBottom - 24);
+  const availableAbove = Math.max(0, inputTop - boundaryTop - 16);
+  const opensUp = availableBelow < minimumHeight && availableAbove > availableBelow;
+  const available = opensUp ? availableAbove : availableBelow;
+  const viewportMaximum = viewportBottom * 0.55;
+  return {
+    opensUp,
+    maxHeight: Math.floor(Math.max(0, Math.min(preferredMaximum, viewportMaximum, available)))
+  };
+}
+
+function filterInlineSuggestItems(items, getText, query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  return (items || []).filter((item) => {
+    const text = String(getText(item) || "").toLowerCase();
+    return !normalizedQuery || text.includes(normalizedQuery);
+  });
+}
+
 function normalizeFolderPath(value) {
   const raw = String(value || "").trim();
   if (!raw || raw === "/") return "/";
@@ -3402,6 +3423,7 @@ export {
   buildActionPreviewState,
   buildOperationEditorModel,
   calculateInlineSuggestHorizontalGeometry,
+  calculateInlineSuggestVerticalGeometry,
   captureModalScrollState,
   convertOperationsForOperation,
   createEmptyAction,
@@ -3409,6 +3431,7 @@ export {
   emptyResult,
   evaluateOperations,
   filterExistingPropertyCandidates,
+  filterInlineSuggestItems,
   filterOperationPropertyCandidates,
   focusWithoutScroll,
   folderTargetMatchesPath,
