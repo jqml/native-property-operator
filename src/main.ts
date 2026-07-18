@@ -6,11 +6,13 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  setIcon,
   TFile,
   TFolder,
   ToggleComponent,
   normalizePath
 } from "obsidian";
+import { moveItemByOffset, moveItemToIndex, reorderById } from "./reorder";
 
 const PROPERTY_TYPES = {
   TEXT: "Text",
@@ -991,10 +993,15 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "No properties configured." });
     }
 
+    const listEl = containerEl.createDiv({ cls: "npo-property-list npo-reorderable-list" });
+    listEl.dataset.npoReorderList = "properties";
+    const reorderItems = [];
+
     for (const property of this.plugin.settings.properties) {
       let nextName = property.name;
       let nextType = property.type;
       const cardEl = containerEl.createDiv({ cls: "npo-property-card" });
+      listEl.appendChild(cardEl);
       cardEl.addClass("native-property-operator-style-016");
       cardEl.addClass("native-property-operator-style-017");
       cardEl.addClass("native-property-operator-style-018");
@@ -1006,6 +1013,8 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       mainRowEl.addClass("native-property-operator-style-022");
       mainRowEl.addClass("native-property-operator-style-023");
       mainRowEl.addClass("native-property-operator-style-024");
+
+      const reorderHandle = createReorderHandle(mainRowEl, `Reorder property ${property.name}`);
 
       const nameControlEl = mainRowEl.createDiv({ cls: "npo-property-name-control" });
       nameControlEl.addClass("native-property-operator-style-025");
@@ -1086,7 +1095,22 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
+      reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: property.id });
     }
+
+    wireReorderableList(listEl, reorderItems, {
+      listKey: "properties",
+      label: "property",
+      getItems: () => this.plugin.settings.properties,
+      commit: async (items) => {
+        this.plugin.settings.properties = items;
+        await this.plugin.saveSettings();
+      },
+      restore: (items) => {
+        this.plugin.settings.properties = items;
+      },
+      onRender: () => this.display()
+    });
 
     new Setting(containerEl).addButton((button) => {
       button.setButtonText("Add property").onClick(() => {
@@ -1126,8 +1150,15 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "No saved manual actions." });
     }
 
+    const listEl = containerEl.createDiv({ cls: "npo-action-list npo-reorderable-list" });
+    listEl.dataset.npoReorderList = "manual-actions";
+    const reorderItems = [];
+
     for (const action of this.plugin.settings.manualActions) {
-      new Setting(containerEl)
+      const cardEl = listEl.createDiv({ cls: "npo-action-card npo-reorderable-item" });
+      const headerEl = cardEl.createDiv({ cls: "npo-action-card-header" });
+      const reorderHandle = createReorderHandle(headerEl, `Reorder manual action ${action.name || "unnamed action"}`);
+      const setting = new Setting(headerEl)
         .setName(action.name)
         .setDesc(`${displayTarget(action)} - ${describeAction(action)} - ${displayResult(action.lastResult)}`)
         .addButton((button) => button.setButtonText("Preview").onClick(() => new PreviewModal(this.app, this.plugin, action, null, false).open()))
@@ -1138,7 +1169,23 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.display();
         }));
+      setting.settingEl.addClass("npo-action-setting");
+      reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: action.id });
     }
+
+    wireReorderableList(listEl, reorderItems, {
+      listKey: "manual-actions",
+      label: "manual action",
+      getItems: () => this.plugin.settings.manualActions,
+      commit: async (items) => {
+        this.plugin.settings.manualActions = items;
+        await this.plugin.saveSettings();
+      },
+      restore: (items) => {
+        this.plugin.settings.manualActions = items;
+      },
+      onRender: () => this.display()
+    });
 
     new Setting(containerEl).addButton((button) => {
       button.setButtonText("Add manual action").onClick(() => this.plugin.openManualActionEditor(null));
@@ -1150,8 +1197,15 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "No auto actions." });
     }
 
+    const listEl = containerEl.createDiv({ cls: "npo-action-list npo-reorderable-list" });
+    listEl.dataset.npoReorderList = "auto-actions";
+    const reorderItems = [];
+
     for (const action of this.plugin.settings.autoActions) {
-      new Setting(containerEl)
+      const cardEl = listEl.createDiv({ cls: "npo-action-card npo-reorderable-item" });
+      const headerEl = cardEl.createDiv({ cls: "npo-action-card-header" });
+      const reorderHandle = createReorderHandle(headerEl, `Reorder automatic action ${action.name || "unnamed action"}`);
+      const setting = new Setting(headerEl)
         .setName(action.name)
         .setDesc(`${displayAutoTargets(action)} - New or moved Markdown note - ${describeAction(action)} - ${displayResult(action.lastResult)}${displayInitialSyncResult(action)}`)
         .addToggle((toggle) => toggle.setValue(Boolean(action.enabled)).onChange(async (value) => {
@@ -1178,7 +1232,23 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.display();
         }));
+      setting.settingEl.addClass("npo-action-setting");
+      reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: action.id });
     }
+
+    wireReorderableList(listEl, reorderItems, {
+      listKey: "auto-actions",
+      label: "automatic action",
+      getItems: () => this.plugin.settings.autoActions,
+      commit: async (items) => {
+        this.plugin.settings.autoActions = items;
+        await this.plugin.saveSettings();
+      },
+      restore: (items) => {
+        this.plugin.settings.autoActions = items;
+      },
+      onRender: () => this.display()
+    });
 
     new Setting(containerEl).addButton((button) => {
       button.setButtonText("Add auto action").onClick(() => this.plugin.openAutoActionEditor(null));
@@ -1201,6 +1271,130 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       }));
   }
 
+}
+
+function createReorderHandle(parentEl, label) {
+  const handleEl = parentEl.createEl("button", {
+    type: "button",
+    cls: "npo-reorder-handle",
+    attr: { "aria-label": label, title: label }
+  });
+  setIcon(handleEl, "grip-vertical");
+  return handleEl;
+}
+
+function wireReorderableList(listEl, reorderItems, options) {
+  if (!listEl || !Array.isArray(reorderItems) || reorderItems.length === 0) return;
+
+  const state = {
+    draggedId: "",
+    draggedItemEl: null,
+    targetItemEl: null
+  };
+
+  const clearIndicators = () => {
+    for (const entry of reorderItems) {
+      entry.itemEl.removeClass("npo-reorder-dragging");
+      entry.itemEl.removeClass("npo-reorder-target-before");
+      entry.itemEl.removeClass("npo-reorder-target-after");
+    }
+    state.draggedId = "";
+    state.draggedItemEl = null;
+    state.targetItemEl = null;
+  };
+
+  const persist = async (nextItems, itemId) => {
+    const previousItems = options.getItems();
+    if (nextItems === previousItems) return;
+
+    try {
+      await options.commit(nextItems);
+      options.onRender();
+      new Notice(`Moved ${options.label} to position ${nextItems.findIndex((item) => item.id === itemId) + 1} of ${nextItems.length}.`);
+      focusReorderHandle(listEl.ownerDocument, options.listKey, itemId);
+    } catch (error) {
+      try {
+        await options.commit(previousItems);
+      } catch (_restoreError) {
+        options.restore(previousItems);
+      }
+      options.onRender();
+      new Notice(`Could not save ${options.label} order. The previous order was restored.`);
+      console.error(`Native Property Operator: failed to save ${options.label} order.`, error);
+    }
+  };
+
+  for (const entry of reorderItems) {
+    const { itemEl, handleEl, id } = entry;
+    handleEl.draggable = true;
+    handleEl.dataset.npoReorderList = options.listKey;
+    handleEl.dataset.npoReorderItem = id;
+    handleEl.addEventListener("dragstart", (event) => {
+      state.draggedId = id;
+      state.draggedItemEl = itemEl;
+      itemEl.addClass("npo-reorder-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", id);
+      }
+    });
+    handleEl.addEventListener("dragend", clearIndicators);
+    handleEl.addEventListener("keydown", (event) => {
+      if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+      event.preventDefault();
+      const offset = event.key === "ArrowUp" ? -1 : 1;
+      const currentItems = options.getItems();
+      const nextItems = moveItemByOffset(currentItems, id, offset);
+      if (nextItems === currentItems) {
+        new Notice(`${options.label} is already at the ${offset < 0 ? "top" : "bottom"}.`);
+        return;
+      }
+      void persist(nextItems, id);
+    });
+    itemEl.addEventListener("dragover", (event) => {
+      if (!state.draggedId || state.draggedId === id) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      const rect = itemEl.getBoundingClientRect();
+      const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      clearReorderTargetIndicators(reorderItems);
+      itemEl.addClass(placement === "before" ? "npo-reorder-target-before" : "npo-reorder-target-after");
+      state.targetItemEl = itemEl;
+    });
+    itemEl.addEventListener("dragleave", (event) => {
+      if (event.relatedTarget && itemEl.contains(event.relatedTarget)) return;
+      itemEl.removeClass("npo-reorder-target-before");
+      itemEl.removeClass("npo-reorder-target-after");
+    });
+    itemEl.addEventListener("drop", (event) => {
+      if (!state.draggedId || state.draggedId === id) return;
+      event.preventDefault();
+      const rect = itemEl.getBoundingClientRect();
+      const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      const nextItems = reorderById(options.getItems(), state.draggedId, id, placement);
+      const draggedId = state.draggedId;
+      clearIndicators();
+      void persist(nextItems, draggedId);
+    });
+  }
+}
+
+function clearReorderTargetIndicators(reorderItems) {
+  for (const entry of reorderItems) {
+    entry.itemEl.removeClass("npo-reorder-target-before");
+    entry.itemEl.removeClass("npo-reorder-target-after");
+  }
+}
+
+function focusReorderHandle(ownerDocument, listKey, itemId) {
+  if (!ownerDocument || !ownerDocument.querySelectorAll) return;
+  const handles = ownerDocument.querySelectorAll("[data-npo-reorder-list][data-npo-reorder-item]");
+  for (const handleEl of handles) {
+    if (handleEl.dataset.npoReorderList === listKey && handleEl.dataset.npoReorderItem === itemId) {
+      focusWithoutScroll(handleEl);
+      return;
+    }
+  }
 }
 
 class PropertyEditorModal extends Modal {
@@ -1499,8 +1693,22 @@ class ExistingPropertyBrowserModal extends Modal {
     for (const [index, item] of this.filteredItems.entries()) {
       const rowEl = this.resultsEl.createEl("button", {
         cls: "npo-existing-property-result",
-        text: formatExistingPropertyCandidate(item)
+        type: "button",
+        attr: {
+          "aria-selected": index === this.selectedIndex ? "true" : "false"
+        }
       });
+      rowEl.createDiv({ cls: "npo-existing-property-result-title", text: item.name });
+      rowEl.createDiv({
+        cls: "npo-existing-property-result-meta",
+        text: `${item.inferredType} · appears in ${item.count} file${item.count === 1 ? "" : "s"}`
+      });
+      if (item.examples && item.examples.length > 0) {
+        rowEl.createDiv({
+          cls: "npo-existing-property-result-examples",
+          text: `Examples: ${item.examples.join(", ")}`
+        });
+      }
       rowEl.toggleClass("npo-existing-property-result-selected", index === this.selectedIndex);
       rowEl.addEventListener("click", () => this.chooseSelected(index));
     }
@@ -2429,11 +2637,11 @@ function normalizeProperties(properties) {
 }
 
 function normalizeProperty(property) {
-  return {
+  return Object.assign({}, property || {}, {
     id: property.id || createId(),
     name: String(property.name || "").trim(),
     type: Object.values(PROPERTY_TYPES).includes(property.type) ? property.type : PROPERTY_TYPES.TEXT
-  };
+  });
 }
 
 function migrateActions(actions, kind) {
@@ -3443,6 +3651,9 @@ export {
   normalizeTargets,
   restoreModalScrollState,
   revealOperationCardWithoutJump,
+  moveItemByOffset,
+  moveItemToIndex,
+  reorderById,
   targetMatchesPath,
   validateAction
 };

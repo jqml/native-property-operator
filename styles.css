@@ -625,6 +625,8 @@
 }
 
 .npo-existing-property-browser {
+  box-sizing: border-box;
+  max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
 }
@@ -652,20 +654,36 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
 }
 
 .npo-existing-property-result {
-  display: block;
+  appearance: none;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
   width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
   min-width: 0;
+  margin: 0;
   padding: 10px 12px;
+  overflow: visible;
   border: 0;
   border-bottom: 1px solid var(--background-modifier-border);
   border-radius: 0;
   background: transparent;
+  background-image: none;
+  box-shadow: none;
   color: var(--text-normal);
+  cursor: pointer;
+  line-height: normal;
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -674,6 +692,32 @@
 .npo-existing-property-result:hover,
 .npo-existing-property-result-selected {
   background: var(--background-modifier-hover);
+  background-image: none;
+  box-shadow: none;
+}
+
+.npo-existing-property-result-title,
+.npo-existing-property-result-meta,
+.npo-existing-property-result-examples {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-align: left;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.npo-existing-property-result-title {
+  font-weight: 600;
+}
+
+.npo-existing-property-result-meta,
+.npo-existing-property-result-examples {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
 .npo-existing-property-empty,
@@ -682,7 +726,131 @@
   color: var(--text-muted);
 }
 
+.npo-property-list,
+.npo-action-list {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.npo-property-card,
+.npo-action-card {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.npo-property-main-row {
+  min-width: 0;
+}
+
+.npo-action-card {
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.npo-action-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 8px;
+}
+
+.npo-action-setting {
+  flex: 1 1 420px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.npo-action-setting .setting-item-info,
+.npo-action-setting .setting-item-control {
+  min-width: 0;
+}
+
+.npo-action-setting .setting-item-info {
+  overflow-wrap: anywhere;
+}
+
+.npo-action-setting .setting-item-control {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  max-width: 100%;
+}
+
+.npo-reorder-handle {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 28px;
+  min-width: 28px;
+  margin-top: 7px;
+  padding: 4px;
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.npo-reorder-handle:active {
+  cursor: grabbing;
+}
+
+.npo-reorder-handle:hover,
+.npo-reorder-handle:focus-visible {
+  color: var(--text-normal);
+}
+
+.npo-reorder-dragging {
+  background: var(--background-modifier-hover);
+  outline: 1px dashed var(--background-modifier-border-hover);
+}
+
+.npo-reorder-target-before {
+  border-top: 2px solid var(--interactive-accent);
+}
+
+.npo-reorder-target-after {
+  border-bottom: 2px solid var(--interactive-accent);
+}
+
 @media (max-width: 600px) {
+  .npo-property-main-row {
+    align-items: stretch;
+  }
+
+  .npo-property-name-control,
+  .npo-property-type-control {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .npo-action-card-header {
+    align-items: stretch;
+  }
+
+  .npo-action-setting {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .npo-action-setting .setting-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .npo-action-setting .setting-item-control {
+    width: 100%;
+  }
+
   .npo-operation-card-fields .setting-item {
     flex-direction: column;
     align-items: stretch;

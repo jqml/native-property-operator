@@ -12,6 +12,8 @@ The plugin only targets visible Markdown notes. It ignores the Obsidian configur
 
 - Maintain a property catalog with native property types.
 - Browse every uncataloged detected frontmatter property in an alphabetized, scrollable browser with conservative type inference.
+- Reorder property catalog entries, manual actions, and automatic actions with dedicated drag handles or Alt/Option + Arrow Up/Down.
+- Persist each list's order across settings navigation, reloads, restarts, and configuration export/import.
 - Preview and apply catalog name/type changes.
 - Create saved manual actions for adding, removing, renaming, setting values, or changing types for multiple properties.
 - Select multiple exact files and folder trees in one action. Every folder includes all eligible Markdown descendants; `/` means the full visible vault.
@@ -36,6 +38,8 @@ The catalog stores property names and their intended native Obsidian property ty
 
 **Add existing property** opens a full browser. A blank search shows every eligible uncataloged property in case-insensitive alphabetical order; the result area scrolls independently and supports Arrow, Page, Home, End, Enter, and Escape keys. Inline action-field suggestions remain compact.
 
+Every browser result is a separate readable row with property name, detected type, file count, and representative examples. Property catalog cards and saved action cards have a dedicated `grip-vertical` handle. Dragging starts only from that handle; keyboard users can focus the handle and use Alt/Option + Arrow Up or Arrow Down. The saved arrays retain their current order during migration, adding a property appends it, deleting removes only that entry, and renaming keeps the same position. Reordering does not apply actions, rename properties, scan notes, or modify frontmatter.
+
 When changing a catalog property name, destination conflicts are skipped by default. If overwrite is enabled, existing destination values may be replaced after confirmation. Type-only catalog changes update the catalog unless value normalization is explicitly enabled.
 
 ## Manual actions
@@ -49,6 +53,8 @@ Saved manual actions can target the current file, the current folder tree, or mu
 - Change property type
 
 Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
+
+Manual action cards and automatic action cards can be reordered independently. Their stable action IDs, targets, enabled state, trigger, result summaries, and unrelated configuration fields remain unchanged. A valid drop or keyboard move saves immediately; a persistence failure restores the previous order and reports the failure.
 
 The manual and automatic action editors share ordered target rows and property cards. Every target and property remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Compact property, folder, and file suggestions align to the input's left edge and use a neutral theme-native popup surface. Candidate names and complete property metadata wrap in content-sized rows, while long result lists scroll independently with mouse, trackpad, touch, and keyboard navigation. Property suggestions omit exact-case source names already selected in another row of the same action while retaining the focused row's own value. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
 
@@ -84,6 +90,9 @@ Install dependencies and build:
 
 ```sh
 npm ci
+npm test
+npm run lint
+npm run check
 npm run build
 ```
 
@@ -129,6 +138,25 @@ Add existing property:
 
 - Open **Add existing property** with a blank query; confirm all eligible uncataloged properties appear alphabetically and the result list scrolls to the bottom.
 - Test Page Down and End, search for one property, select it, and confirm it is added to the catalog.
+
+Property and action ordering:
+
+- Create or add at least five catalog properties. Drag the fifth property to the first position and confirm the insertion indicator, readable card layout, and clickable controls.
+- Close and reopen settings, reload Obsidian, and confirm catalog order persists. Rename a property and confirm its position is unchanged; delete one and confirm the remaining order is stable.
+- Focus a property handle and use Alt/Option + Arrow Up/Down. Confirm focus stays on the moved handle and first/last boundaries are safe.
+- Create at least four manual actions and four automatic actions. Reorder each list independently, confirm Preview, Apply, Edit, Delete, toggles, targets, and last-run information remain intact, and confirm reordering does not execute actions.
+
+Add existing property browser:
+
+- Leave the search blank and confirm every candidate is a distinct row with separate name, type/count, and examples lines.
+- Scroll with mouse and trackpad to the final result, then test Page Down, End, Home, Arrow navigation, Enter selection, and Escape closing.
+- Confirm long names and paths wrap without clipping, the results list scrolls independently, and the settings/modal behind it does not scroll.
+
+Overlap audit:
+
+- Test General, Properties, Manual actions, and Auto actions plus every editor, preview/result modal, target selector, property-operation variant, conversion control, and Save/Cancel footer.
+- Repeat at normal and narrow modal widths, in light and dark themes, and in a popout window.
+- Confirm no overlapping labels/buttons, clipped metadata, card intersections, hidden dropdowns, footer overlap, or horizontal page scrolling. Confirm compact suggestions, the Add existing property browser, and action-editor lists scroll inside the active window.
 
 Automatic actions:
 
