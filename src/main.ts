@@ -2008,8 +2008,11 @@ class ActionEditorModal extends Modal {
           delete row.propertyId;
           delete row.propertyReferenceKind;
           row.propertyNameSnapshot = row.propertyName;
-          if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
-            row.propertyType = this.plugin.getPropertyType(row.propertyName, row.propertyType || PROPERTY_TYPES.TEXT);
+          const typedBinding = resolveActionPropertyReference(row, this.plugin, candidates);
+          if (typedBinding) {
+            bindActionPropertyReference(row, typedBinding);
+            if (this.action.operation !== ACTIONS.TYPE) row.propertyType = typedBinding.type;
+            this.rerenderPreservingScroll();
           }
         });
         new PropertyInputSuggest(sourceInput, () => filterOperationPropertyCandidates(
@@ -2038,11 +2041,21 @@ class ActionEditorModal extends Modal {
         });
       }
 
-      if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET || this.action.operation === ACTIONS.TYPE) {
-        const typeSetting = new Setting(fieldsEl).setName(this.action.operation === ACTIONS.TYPE ? "Target type" : "Type");
-        if (binding && this.action.operation !== ACTIONS.TYPE) {
+      if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET) {
+        if (binding) {
+          const typeSetting = new Setting(fieldsEl).setName("Type");
           typeSetting.setDesc(`Current type: ${binding.type}`);
-        } else if (this.action.operation === ACTIONS.TYPE && binding) {
+          if (row.propertyType === binding.type) this.addOperationValueEditor(fieldsEl, row);
+        } else {
+          fieldsEl.createDiv({ cls: "npo-property-reference-type", text: "Type: Not resolved" });
+          fieldsEl.createDiv({
+            cls: "npo-property-reference-error",
+            text: "Add this property to the Properties tab first so its type can be defined."
+          });
+        }
+      } else if (this.action.operation === ACTIONS.TYPE) {
+        const typeSetting = new Setting(fieldsEl).setName("Target type");
+        if (binding) {
           typeSetting.setDesc(`Current type: ${binding.type}`);
           typeSetting.addDropdown((dropdown) => {
             for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
@@ -2052,16 +2065,12 @@ class ActionEditorModal extends Modal {
             });
           });
         } else {
-          typeSetting.addDropdown((dropdown) => {
-          for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
-          dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
-            row.propertyType = value;
-            this.rerenderPreservingScroll();
-          });
+          fieldsEl.createDiv({
+            cls: "npo-property-reference-error",
+            text: "Select an exact existing property before choosing a target type."
           });
         }
-        if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(fieldsEl, row);
-        else this.addTypeConversionOptions(fieldsEl, row);
+        if (binding) this.addTypeConversionOptions(fieldsEl, row);
       }
       reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: row.id });
     }
@@ -3230,14 +3239,11 @@ function validateActionPropertyReferences(action, plugin, context = null) {
   const operations = normalizeOperations(action);
   for (const [index, row] of operations.entries()) {
     const binding = resolveActionPropertyReference(row, plugin, candidates);
-    const requiresExisting = action.operation === ACTIONS.REMOVE
-      || action.operation === ACTIONS.RENAME
-      || action.operation === ACTIONS.TYPE
-      || (action.operation === ACTIONS.SET && !action.addIfMissing);
+    const requiresKnownProperty = Object.values(ACTIONS).includes(action.operation);
     if (row.propertyReferenceKind && !binding) return `Property ${index + 1} requires review: its selected property is no longer available.`;
-    if (requiresExisting && !binding) return `Property ${index + 1} requires an exact existing property selection: ${row.propertyName}.`;
-    if (binding && !row.propertyReferenceKind && (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET)) {
-      return `Property ${index + 1} matches existing property ${binding.name}; select it explicitly or choose a new property name.`;
+    if (requiresKnownProperty && !binding) {
+      if (action.operation === ACTIONS.ADD) return `Add this property to the Properties tab first so its type can be defined: ${row.propertyName}.`;
+      return `Property ${index + 1} requires an exact existing property selection: ${row.propertyName}.`;
     }
     if (binding && (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) && row.propertyType !== binding.type) {
       return `Property ${index + 1} requires review: ${binding.name} is now type ${binding.type}, but this operation stores ${row.propertyType}.`;

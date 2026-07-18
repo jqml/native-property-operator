@@ -193,6 +193,7 @@ const propertyPlugin = {
 };
 const configuredBinding = resolveActionPropertyReference({ propertyId: "publish-date", propertyName: "PublishDate" }, propertyPlugin, propertyPlugin.buildPropertyCandidates());
 assert.deepEqual(configuredBinding, { id: "publish-date", name: "PublishDate", type: PROPERTY_TYPES.DATE, kind: "configured" }, "configured references bind by stable ID");
+assert.deepEqual(resolveActionPropertyReference({ propertyName: "PublishDate" }, propertyPlugin, propertyPlugin.buildPropertyCandidates()), configuredBinding, "exact typed property names resolve like selected configured properties");
 assert.deepEqual(resolveActionPropertyReference({ propertyName: "DetectedOnly" }, propertyPlugin, propertyPlugin.buildPropertyCandidates()), { name: "DetectedOnly", type: PROPERTY_TYPES.TEXT, kind: "detected" }, "detected references bind by exact canonical name");
 assert.equal(resolveActionPropertyReference({ propertyName: "publishdate" }, propertyPlugin, propertyPlugin.buildPropertyCandidates()), null, "property references do not use fuzzy or case-insensitive guessing");
 
@@ -220,8 +221,10 @@ const unresolvedAction = normalizeAction({ name: "Review", operation: ACTIONS.RE
 assert.match(validateActionPropertyReferences(unresolvedAction, propertyPlugin), /requires review|exact existing property selection/, "unresolved existing property blocks validation");
 const mismatchedAction = normalizeAction({ name: "Mismatch", operation: ACTIONS.ADD, operations: [{ id: "mismatch-row", propertyName: "PublishDate", propertyType: PROPERTY_TYPES.NUMBER, value: 1 }] }, "manual");
 assert.match(validateActionPropertyReferences(mismatchedAction, propertyPlugin), /select it explicitly|requires review/, "typed existing property must be explicitly selected and type-compatible");
+const unknownAddAction = normalizeAction({ name: "Unknown add", operation: ACTIONS.ADD, operations: [{ id: "unknown-add-row", propertyName: "NotConfigured", propertyType: PROPERTY_TYPES.NUMBER, value: 1 }] }, "manual");
+assert.match(validateActionPropertyReferences(unknownAddAction, propertyPlugin), /Properties tab first/, "unknown Add property names require Properties-tab configuration");
 const newAction = normalizeAction({ name: "New", operation: ACTIONS.ADD, operations: [{ id: "new-row", propertyName: "BrandNew", propertyType: PROPERTY_TYPES.TEXT, value: "x" }] }, "manual");
-assert.equal(validateActionPropertyReferences(newAction, propertyPlugin), "", "genuinely new Add property remains editable");
+assert.match(validateActionPropertyReferences(newAction, propertyPlugin), /Properties tab first/, "unknown Add names are blocked until configured in Properties");
 const orderedOperations = normalizeAction({ name: "Ordered", operation: ACTIONS.ADD, operations: [
   { id: "op-1", propertyName: "One", propertyType: PROPERTY_TYPES.TEXT, value: "1", unknown: { keep: true } },
   { id: "op-2", propertyName: "Two", propertyType: PROPERTY_TYPES.TEXT, value: "2" },
@@ -278,6 +281,8 @@ assert.match(source, /data-operation-index/);
 assert.match(source, /listKey: `operations-\$\{this\.action\.id\}`/);
 assert.match(source, /pendingOperationFocusIndex/);
 assert.match(source, /validateActionPropertyReferences/);
+assert.match(source, /typedBinding/);
+assert.match(source, /npo-property-reference-error/);
 
 assert.match(styles, /\.npo-existing-property-results[\s\S]*overflow-y: auto/);
 assert.match(styles, /\.npo-existing-property-results[\s\S]*overflow-x: hidden/);
@@ -285,7 +290,11 @@ assert.match(styles, /\.npo-existing-property-results[\s\S]*overscroll-behavior:
 assert.match(styles, /\.npo-existing-property-results[\s\S]*scrollbar-gutter: stable/);
 assert.match(styles, /\.npo-existing-property-results\s*\{[\s\S]*background:\s*var\(--background-primary\)/);
 assert.match(styles, /\.npo-existing-property-result\s*\{[\s\S]*background:\s*transparent/);
-assert.match(styles, /\.npo-existing-property-result:hover,[\s\S]*\.npo-existing-property-result-selected[\s\S]*background:\s*var\(--background-modifier-hover\)/);
+assert.match(styles, /\.npo-existing-property-result:hover\s*\{[\s\S]*background-color:\s*var\(--background-modifier-hover\)/);
+assert.match(styles, /\.npo-existing-property-result-selected\s*\{[\s\S]*background-color:\s*var\(--background-modifier-hover\)/);
+assert.match(styles, /color-mix\(in srgb, var\(--background-primary\) 88%, var\(--text-normal\) 12%\)/);
+assert.match(styles, /color-mix\(in srgb, var\(--background-primary\) 82%, var\(--text-normal\) 18%\)/);
+assert.match(styles, /\.npo-existing-property-result:focus-visible/);
 assert.doesNotMatch(styles, /\.npo-existing-property-results\s*\{[\s\S]*background:\s*(?:white|black|#[0-9a-f]{3,8})/i);
 assert.match(styles, /\.npo-existing-property-result\s*\{[\s\S]*height: auto/);
 assert.match(styles, /\.npo-existing-property-result-title/);

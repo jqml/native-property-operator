@@ -672,6 +672,23 @@ assert.match(source, /eventName === "rename"/);
 assert.match(source, /autoRunKeys/);
 assert.match(source, /lastRunKey/);
 const operationEditorSource = source.slice(source.indexOf("  addOperationEditor(contentEl) {"), source.indexOf("  addOperationValueEditor(containerEl, row) {"));
+const addSetBranch = source.slice(
+  source.indexOf('if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET) {', source.indexOf("  addOperationEditor(contentEl) {")),
+  source.indexOf('} else if (this.action.operation === ACTIONS.TYPE) {', source.indexOf("  addOperationEditor(contentEl) {") )
+);
+const typeBranch = source.slice(
+  source.indexOf('} else if (this.action.operation === ACTIONS.TYPE) {', source.indexOf("  addOperationEditor(contentEl) {")),
+  source.indexOf('      reorderItems.push', source.indexOf("  addOperationEditor(contentEl) {"))
+);
+assert.doesNotMatch(addSetBranch, /addDropdown/, "Add and Set rows do not expose an editable Type dropdown");
+assert.match(addSetBranch, /Current type: \$\{binding\.type\}/, "Add and Set display the authoritative type as read-only metadata");
+assert.match(addSetBranch, /npo-property-reference-error/, "unresolved Add and Set rows show row-level type guidance");
+assert.match(typeBranch, /setName\("Target type"\)/, "Change type keeps an explicit target type control");
+assert.match(typeBranch, /addDropdown/, "Change type retains its editable target-type dropdown");
+assert.match(source, /Properties tab first so its type can be defined/, "unknown properties direct users to the Properties tab");
+assert.match(source, /typedBinding/, "typed exact names resolve through the same binding helper as suggestions");
+assert.match(source, /npo-property-reference-type/, "unresolved rows do not invent a type");
+assert.match(source, /npo-property-reference-error/, "unknown names are visibly invalid in the editor");
 assert.ok(operationEditorSource.indexOf('cls: "npo-operation-list"') < operationEditorSource.indexOf('cls: "npo-operation-add-button"'), "add button renders after the operation list");
 assert.match(operationEditorSource, /for \(const card of editorModel\.cards\)/, "one card is constructed for each ordered operation model");
 assert.ok(operationEditorSource.indexOf('cls: "npo-operation-card-header"') < operationEditorSource.indexOf('"Remove"'), "Remove button belongs to the card header");
@@ -779,3 +796,8 @@ assert.doesNotMatch(browserFilterSource, /suggestLimit|slice\(0,/, "full browser
 assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overflow-y:\s*auto/s);
 assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overscroll-behavior:\s*contain/s);
 assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*overflow-x:\s*hidden/s);
+assert.match(styles, /\.npo-existing-property-results\s*\{[^}]*background:\s*var\(--background-primary\)/s);
+assert.match(styles, /\.npo-existing-property-result\s*\{[^}]*background-color:\s*transparent/s);
+assert.match(styles, /\.npo-existing-property-result:hover\s*\{[^}]*color-mix/s);
+assert.match(styles, /\.npo-existing-property-result-selected\s*\{[^}]*color-mix/s);
+assert.doesNotMatch(styles, /(^|\n)\s*button\s*\{/m, "browser state styling remains scoped to result buttons");

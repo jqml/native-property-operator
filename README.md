@@ -53,9 +53,9 @@ Saved manual actions can target the current file, the current folder tree, or mu
 - Set/change property value
 - Change property type
 
-Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically. Every operation row has a stable ID and can be reordered with its `grip-vertical` handle or Alt/Option + Arrow Up/Down; the complete property reference, type, value, conversion options, and unknown fields move together.
+Each saved action uses a typed `operations` array. Add and set rows contain an exact known property name and value; their current configured/detected type is read-only and drives the value editor. Remove rows contain names; rename rows contain old/new names; and type rows contain a source property plus an explicitly editable target type and conservative conversion options. Legacy scalar action fields are migrated to one row automatically. Every operation row has a stable ID and can be reordered with its `grip-vertical` handle or Alt/Option + Arrow Up/Down; the complete property reference, type, value, conversion options, and unknown fields move together.
 
-Selecting an existing property in an action binds the row to its exact canonical name and detected/configured type. The selected name and current type are shown as a read-only reference; **Change property** is required to choose another property. Add-property rows remain editable only for genuinely new names, Rename locks its source, and Change type keeps only its target type editable. Legacy name-only references are matched by exact configured name first, then exact detected name; unresolved or type-incompatible references require review before Save, Preview, Apply, or automatic execution.
+Selecting an existing property in an action binds the row to its exact canonical name and detected/configured type. Typing the exact name resolves identically to choosing a suggestion. The selected name and current type are shown as a read-only reference; **Change property** is required to choose another property. Add-property rows never expose an editable Type selector and cannot invent unknown property types; configure an unknown property on the Properties tab first. Rename locks its source, and Change type keeps only its target type editable. Legacy name-only references are matched by exact configured name first, then exact detected name; unresolved or type-incompatible references require review before Save, Preview, Apply, or automatic execution.
 
 Manual action cards and automatic action cards can be reordered independently. Their stable action IDs, targets, enabled state, trigger, result summaries, and unrelated configuration fields remain unchanged. A valid drop or keyboard move saves immediately; a persistence failure restores the previous order and reports the failure.
 
@@ -144,12 +144,14 @@ Add existing property:
 - Open **Add existing property** with a blank query; confirm all eligible uncataloged properties appear alphabetically and the result list scrolls to the bottom.
 - Test Page Down and End, search for one property, select it, and confirm it is added to the catalog.
 - In light theme, confirm the result panel uses the native light surface, unselected rows are neutral, hover affects only one row, and keyboard selection is visibly darker; repeat in dark theme.
+- Confirm normal rows are not permanently filled, hover/selection are darker or contrasting only on the active row, and focus has a visible outline without affecting neighboring rows.
 
 Canonical folders and locked properties:
 
 - If the vault has a `Publish` folder, enter `publish` and `Publish` in target pickers and confirm each resolves to one displayed/stored `Publish` target. Repeat with `Publish/essays` and confirm nested casing is preserved. If no such folder exists, do not create or rename one for this check.
 - Select an existing property in Add, Remove, Set, Rename, and Change type operations. Confirm its canonical name/type are read-only, **Change property** is explicit, Rename only edits its destination, and Change type only edits its target type.
 - Confirm Add can still configure a genuinely new property, unresolved legacy references block Save/Preview/Apply, and a catalog type change requiring review does not execute until corrected.
+- Open Add property in both Manual and Automatic actions; confirm no editable Type dropdown exists, exact typing resolves canonical names/types, unknown names show “Add this property to the Properties tab first so its type can be defined,” and Change type still exposes its target-type dropdown.
 
 Property and action ordering:
 

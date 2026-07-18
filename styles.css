@@ -501,8 +501,20 @@
 }
 
 .npo-locked-property-unresolved,
-.npo-locked-property-review {
+.npo-locked-property-review,
+.npo-property-reference-error {
   color: var(--text-warning);
+}
+
+.npo-property-reference-type,
+.npo-property-reference-error {
+  min-width: 0;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.npo-property-reference-type {
+  color: var(--text-muted);
 }
 
 .npo-operation-change-property {
@@ -732,15 +744,23 @@
   overflow-wrap: anywhere;
 }
 
-.npo-existing-property-result:hover,
-.npo-existing-property-result-selected {
-  background: var(--background-modifier-hover);
+.npo-existing-property-result:hover {
+  background-color: var(--background-modifier-hover);
+  background-color: color-mix(in srgb, var(--background-primary) 88%, var(--text-normal) 12%);
   background-image: none;
   box-shadow: none;
 }
 
 .npo-existing-property-result-selected {
+  background-color: var(--background-modifier-hover);
+  background-color: color-mix(in srgb, var(--background-primary) 82%, var(--text-normal) 18%);
+  background-image: none;
   box-shadow: inset 3px 0 var(--interactive-accent);
+}
+
+.npo-existing-property-result:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 .npo-existing-property-result-title,
