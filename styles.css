@@ -711,11 +711,10 @@
   touch-action: pan-y;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  background: var(--background-primary);
+  background-color: var(--background-secondary);
 }
 
 .npo-existing-property-result {
-  appearance: none;
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
@@ -732,9 +731,7 @@
   border: 0;
   border-bottom: 1px solid var(--background-modifier-border);
   border-radius: 0;
-  background: transparent;
   background-color: transparent;
-  background-image: none;
   box-shadow: none;
   color: var(--text-normal);
   cursor: pointer;
@@ -744,18 +741,18 @@
   overflow-wrap: anywhere;
 }
 
-.npo-existing-property-result:hover {
+.npo-existing-property-results > .npo-existing-property-result:hover {
   background-color: var(--background-modifier-hover);
-  background-color: color-mix(in srgb, var(--background-primary) 88%, var(--text-normal) 12%);
-  background-image: none;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
 }
 
-.npo-existing-property-result-selected {
+.npo-existing-property-results > .npo-existing-property-result-selected {
   background-color: var(--background-modifier-hover);
-  background-color: color-mix(in srgb, var(--background-primary) 82%, var(--text-normal) 18%);
-  background-image: none;
   box-shadow: inset 3px 0 var(--interactive-accent);
+}
+
+.npo-existing-property-results > .npo-existing-property-result-selected:hover {
+  box-shadow: inset 3px 0 var(--interactive-accent), inset 0 0 0 1px var(--interactive-accent);
 }
 
 .npo-existing-property-result:focus-visible {

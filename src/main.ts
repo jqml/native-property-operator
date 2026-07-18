@@ -1761,7 +1761,9 @@ class ExistingPropertyBrowserModal extends Modal {
     this.onChoose = onChoose;
     this.query = "";
     this.filteredItems = [];
-    this.selectedIndex = 0;
+    this.selectedIndex = -1;
+    this.resultsId = `npo-existing-property-results-${createId()}`;
+    this.searchLabelId = `npo-existing-property-search-label-${createId()}`;
   }
 
   onOpen() {
@@ -1771,16 +1773,26 @@ class ExistingPropertyBrowserModal extends Modal {
     contentEl.createEl("h2", { text: "Add existing property" });
     const searchSetting = new Setting(contentEl).setName("Search properties");
     searchSetting.settingEl.addClass("npo-existing-property-search");
+    searchSetting.nameEl.setAttr("id", this.searchLabelId);
     searchSetting.addText((text) => {
       this.inputEl = text.inputEl;
+      this.inputEl.setAttr("aria-controls", this.resultsId);
+      this.inputEl.setAttr("aria-autocomplete", "list");
       text.setPlaceholder("Type to filter, or leave blank to browse all").onChange((value) => {
         this.query = value;
-        this.selectedIndex = 0;
+        this.selectedIndex = -1;
         this.renderResults();
       });
       text.inputEl.addEventListener("keydown", (event) => this.handleKeydown(event));
     });
-    this.resultsEl = contentEl.createDiv({ cls: "npo-existing-property-results" });
+    this.resultsEl = contentEl.createDiv({
+      cls: "npo-existing-property-results",
+      attr: {
+        id: this.resultsId,
+        role: "listbox",
+        "aria-labelledby": this.searchLabelId
+      }
+    });
     this.renderResults();
     focusWithoutScroll(this.inputEl);
   }
@@ -1790,14 +1802,17 @@ class ExistingPropertyBrowserModal extends Modal {
     this.resultsEl.empty();
     if (this.filteredItems.length === 0) {
       this.resultsEl.createDiv({ cls: "npo-existing-property-empty", text: "No matching uncataloged properties." });
+      this.inputEl.removeAttribute("aria-activedescendant");
       return;
     }
     this.selectedIndex = Math.min(this.selectedIndex, this.filteredItems.length - 1);
     for (const [index, item] of this.filteredItems.entries()) {
-      const rowEl = this.resultsEl.createEl("button", {
+      const rowEl = this.resultsEl.createDiv({
         cls: "npo-existing-property-result",
-        type: "button",
         attr: {
+          id: `${this.resultsId}-option-${index}`,
+          role: "option",
+          tabindex: "-1",
           "aria-selected": index === this.selectedIndex ? "true" : "false"
         }
       });
@@ -1815,6 +1830,8 @@ class ExistingPropertyBrowserModal extends Modal {
       rowEl.toggleClass("npo-existing-property-result-selected", index === this.selectedIndex);
       rowEl.addEventListener("click", () => this.chooseSelected(index));
     }
+    if (this.selectedIndex >= 0) this.inputEl.setAttr("aria-activedescendant", `${this.resultsId}-option-${this.selectedIndex}`);
+    else this.inputEl.removeAttribute("aria-activedescendant");
   }
 
   handleKeydown(event) {
@@ -1826,16 +1843,23 @@ class ExistingPropertyBrowserModal extends Modal {
       return;
     }
     if (event.key === "Enter") {
-      this.chooseSelected(this.selectedIndex);
+      const index = this.selectedIndex >= 0 ? this.selectedIndex : (this.filteredItems.length > 0 ? 0 : -1);
+      if (index >= 0) this.chooseSelected(index);
       return;
     }
     if (this.filteredItems.length === 0) return;
     if (event.key === "Home") this.selectedIndex = 0;
     else if (event.key === "End") this.selectedIndex = this.filteredItems.length - 1;
-    else if (event.key === "ArrowUp") this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+    else if (event.key === "ArrowUp") this.selectedIndex = this.selectedIndex < 0
+      ? this.filteredItems.length - 1
+      : Math.max(0, this.selectedIndex - 1);
     else if (event.key === "ArrowDown") this.selectedIndex = Math.min(this.filteredItems.length - 1, this.selectedIndex + 1);
-    else if (event.key === "PageUp") this.selectedIndex = Math.max(0, this.selectedIndex - 10);
-    else if (event.key === "PageDown") this.selectedIndex = Math.min(this.filteredItems.length - 1, this.selectedIndex + 10);
+    else if (event.key === "PageUp") this.selectedIndex = this.selectedIndex < 0
+      ? 0
+      : Math.max(0, this.selectedIndex - 10);
+    else if (event.key === "PageDown") this.selectedIndex = this.selectedIndex < 0
+      ? Math.min(this.filteredItems.length - 1, 10)
+      : Math.min(this.filteredItems.length - 1, this.selectedIndex + 10);
     this.renderResults();
     const selectedEl = this.resultsEl.children[this.selectedIndex];
     if (selectedEl && typeof selectedEl.scrollIntoView === "function") selectedEl.scrollIntoView({ block: "nearest" });

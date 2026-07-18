@@ -145,6 +145,7 @@ Add existing property:
 - Test Page Down and End, search for one property, select it, and confirm it is added to the catalog.
 - In light theme, confirm the result panel uses the native light surface, unselected rows are neutral, hover affects only one row, and keyboard selection is visibly darker; repeat in dark theme.
 - Confirm normal rows are not permanently filled, hover/selection are darker or contrasting only on the active row, and focus has a visible outline without affecting neighboring rows.
+- Confirm the panel retains Obsidian's native gray surface, no row is selected on open, hover adds a visible accent outline, and Arrow Down adds the distinct selected left accent bar. Hover another row without losing the selected indicator, then click it to add exactly one property.
 
 Canonical folders and locked properties:
 
