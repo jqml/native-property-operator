@@ -17,6 +17,7 @@ The plugin only targets visible Markdown notes. It ignores the Obsidian configur
 - Preview and apply catalog name/type changes.
 - Create saved manual actions for adding, removing, renaming, setting values, or changing types for multiple properties.
 - Select multiple exact files and folder trees in one action. Every folder includes all eligible Markdown descendants; `/` means the full visible vault.
+- Folder targets are canonicalized from the vault without renaming folders: `publish` resolves to a unique `Publish` folder, nested casing is preserved, and case-equivalent targets are deduplicated.
 - Create auto actions with the same typed targets and multi-property rows; they run when matching Markdown notes are created or moved.
 - Preview changes before applying them.
 - Report changed, skipped, and failed counts with reasons.
@@ -52,11 +53,15 @@ Saved manual actions can target the current file, the current folder tree, or mu
 - Set/change property value
 - Change property type
 
-Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically.
+Each saved action uses a typed `operations` array. Add and set rows contain a property name, native type, and value; remove rows contain names; rename rows contain old/new names; and type rows contain a target type plus conservative conversion options. Legacy scalar action fields are migrated to one row automatically. Every operation row has a stable ID and can be reordered with its `grip-vertical` handle or Alt/Option + Arrow Up/Down; the complete property reference, type, value, conversion options, and unknown fields move together.
+
+Selecting an existing property in an action binds the row to its exact canonical name and detected/configured type. The selected name and current type are shown as a read-only reference; **Change property** is required to choose another property. Add-property rows remain editable only for genuinely new names, Rename locks its source, and Change type keeps only its target type editable. Legacy name-only references are matched by exact configured name first, then exact detected name; unresolved or type-incompatible references require review before Save, Preview, Apply, or automatic execution.
 
 Manual action cards and automatic action cards can be reordered independently. Their stable action IDs, targets, enabled state, trigger, result summaries, and unrelated configuration fields remain unchanged. A valid drop or keyboard move saves immediately; a persistence failure restores the previous order and reports the failure.
 
-The manual and automatic action editors share ordered target rows and property cards. Every target and property remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Compact property, folder, and file suggestions align to the input's left edge and use a neutral theme-native popup surface. Candidate names and complete property metadata wrap in content-sized rows, while long result lists scroll independently with mouse, trackpad, touch, and keyboard navigation. Property suggestions omit exact-case source names already selected in another row of the same action while retaining the focused row's own value. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
+Saved action cards use separate header, summary, and footer sections. Summaries keep the target, operation, result state, and counts readable while clamping to four rendered lines; the complete summary remains available through the native tooltip. Preview, Apply, Edit, Delete, and Sync existing notes stay together in a bottom-right footer that wraps as a group only when the available width requires it.
+
+The manual and automatic action editors share ordered target rows and property-operation cards. Every target and operation remains individually removable. Property-specific fields stay inside the card, operation-specific add controls follow the full card list, and action-level overwrite or add-if-missing settings remain outside the cards. Operation and Type controls align left. Compact property, folder, and file suggestions align to the input's left edge and use a neutral theme-native popup surface. Candidate names and complete property metadata wrap in content-sized rows, while long result lists scroll independently with mouse, trackpad, touch, and keyboard navigation. Property suggestions omit exact-case source names already selected in another row of the same action while retaining the focused row's own value. Card and target rerenders preserve the modal scroll position; newly added cards are revealed and focused without intentionally scrolling back to the top.
 
 Remove actions inspect current frontmatter and match exact property keys. Removing `title` does not remove `Title` or similarly named keys. All configured operations for one note run inside one `processFrontMatter` callback, preserving unrelated frontmatter.
 
@@ -138,6 +143,13 @@ Add existing property:
 
 - Open **Add existing property** with a blank query; confirm all eligible uncataloged properties appear alphabetically and the result list scrolls to the bottom.
 - Test Page Down and End, search for one property, select it, and confirm it is added to the catalog.
+- In light theme, confirm the result panel uses the native light surface, unselected rows are neutral, hover affects only one row, and keyboard selection is visibly darker; repeat in dark theme.
+
+Canonical folders and locked properties:
+
+- If the vault has a `Publish` folder, enter `publish` and `Publish` in target pickers and confirm each resolves to one displayed/stored `Publish` target. Repeat with `Publish/essays` and confirm nested casing is preserved. If no such folder exists, do not create or rename one for this check.
+- Select an existing property in Add, Remove, Set, Rename, and Change type operations. Confirm its canonical name/type are read-only, **Change property** is explicit, Rename only edits its destination, and Change type only edits its target type.
+- Confirm Add can still configure a genuinely new property, unresolved legacy references block Save/Preview/Apply, and a catalog type change requiring review does not execute until corrected.
 
 Property and action ordering:
 
@@ -145,6 +157,9 @@ Property and action ordering:
 - Close and reopen settings, reload Obsidian, and confirm catalog order persists. Rename a property and confirm its position is unchanged; delete one and confirm the remaining order is stable.
 - Focus a property handle and use Alt/Option + Arrow Up/Down. Confirm focus stays on the moved handle and first/last boundaries are safe.
 - Create at least four manual actions and four automatic actions. Reorder each list independently, confirm Preview, Apply, Edit, Delete, toggles, targets, and last-run information remain intact, and confirm reordering does not execute actions.
+- In a saved action editor, create at least four Add/Remove/Set/Rename/Change type rows, reorder them by handle and by Alt/Option + Arrow Up/Down, and confirm the full row data moves together, focus returns to the handle, and order survives Save/reopen and export/import.
+- Confirm every saved action card has a wrapped title header, a summary capped at four rendered lines, and a bottom-right footer. Confirm manual buttons appear Preview, Apply, Edit, Delete and automatic buttons appear Sync existing notes, Edit, Delete.
+- Resize the settings view to a narrow width and confirm footer buttons wrap as one horizontal group without clipping, overlap, or horizontal page scrolling; repeat in light/dark themes and a popout.
 
 Add existing property browser:
 

@@ -94,7 +94,13 @@ const legacy = normalizeSettings({
     unrelated: "preserve"
   }]
 });
-assert.deepEqual(legacy.manualActions[0].operations, [{ propertyName: "priority", propertyType: PROPERTY_TYPES.NUMBER, value: "2" }]);
+assert.equal(legacy.manualActions[0].operations.length, 1);
+assert.match(legacy.manualActions[0].operations[0].id, /^[a-z0-9]+-[a-z0-9]+$/);
+assert.deepEqual({
+  propertyName: legacy.manualActions[0].operations[0].propertyName,
+  propertyType: legacy.manualActions[0].operations[0].propertyType,
+  value: legacy.manualActions[0].operations[0].value
+}, { propertyName: "priority", propertyType: PROPERTY_TYPES.NUMBER, value: "2" });
 assert.equal(legacy.manualActions[0].propertyName, undefined);
 assert.equal(legacy.manualActions[0].customField.keep, true);
 assert.deepEqual(legacy.manualActions[0].targets, [{ type: TARGETS.FILE, path: "note.md" }]);

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import {
+  ButtonComponent,
   FuzzySuggestModal,
   Modal,
   Notice,
@@ -81,7 +82,9 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   async onload() {
     const loadedData = await this.loadData();
     this.settings = normalizeSettings(Object.assign({}, DEFAULT_SETTINGS, loadedData));
-    if (needsActionMigration(loadedData)) await this.saveSettings();
+    const beforeCanonicalization = JSON.stringify(this.settings);
+    this.canonicalizeSettingsFolderPaths();
+    if (needsActionMigration(loadedData) || beforeCanonicalization !== JSON.stringify(this.settings)) await this.saveSettings();
     this.autoRunKeys = new Set();
 
     this.addCommand({
@@ -109,6 +112,7 @@ export default class NativePropertyOperatorPlugin extends Plugin {
 
   async saveSettings() {
     this.settings = normalizeSettings(this.settings);
+    this.canonicalizeSettingsFolderPaths();
     await this.saveData(this.settings);
   }
 
@@ -242,7 +246,7 @@ export default class NativePropertyOperatorPlugin extends Plugin {
   }
 
   getRecursiveMarkdownFilesByPath(folderPath) {
-    const normalized = normalizeFolderPath(folderPath);
+    const normalized = this.canonicalizeFolderPath(folderPath);
     const folder = normalized === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(normalized);
     if (!(folder instanceof TFolder)) return [];
     return this.getRecursiveMarkdownFilesInFolder(folder);
@@ -261,6 +265,25 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     return folders
       .map((folder) => folder.path || "/")
       .sort((a, b) => a.localeCompare(b));
+  }
+
+  canonicalizeFolderPath(folderPath) {
+    if (!this.app || !this.app.vault) return normalizeFolderPath(folderPath);
+    return canonicalFolderPath(folderPath, this.getVisibleFolders());
+  }
+
+  canonicalizeSettingsFolderPaths() {
+    for (const action of [...(this.settings.manualActions || []), ...(this.settings.autoActions || [])]) {
+      this.canonicalizeActionFolderPaths(action);
+    }
+  }
+
+  canonicalizeActionFolderPaths(action) {
+    if (!action) return action;
+    action.targetFolder = this.canonicalizeFolderPath(action.targetFolder || "/");
+    action.targets = canonicalizeTargetsWithPath(action.targets, (path) => this.canonicalizeFolderPath(path));
+    action.autoTargets = canonicalizeTargetsWithPath(action.autoTargets, (path) => this.canonicalizeFolderPath(path));
+    return action;
   }
 
   getVisibleMarkdownFilePaths() {
@@ -468,6 +491,7 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     const files = this.resolveTargetFiles(action, context);
     const entries = [];
     const operation = normalizeAction(action);
+    this.canonicalizeActionFolderPaths(operation);
 
     for (const file of files) {
       try {
@@ -600,7 +624,8 @@ export default class NativePropertyOperatorPlugin extends Plugin {
 
   async previewAndApplyAction(action, context = null, isAuto = false) {
     const actionKind = isAuto || action.trigger ? "auto" : "manual";
-    const validationError = validateAction(action, actionKind);
+    this.canonicalizeActionFolderPaths(action);
+    const validationError = validateAction(action, actionKind) || validateActionPropertyReferences(action, this, context);
     if (validationError) {
       const result = emptyResult();
       result.failed = 1;
@@ -1156,20 +1181,17 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
 
     for (const action of this.plugin.settings.manualActions) {
       const cardEl = listEl.createDiv({ cls: "npo-action-card npo-reorderable-item" });
-      const headerEl = cardEl.createDiv({ cls: "npo-action-card-header" });
-      const reorderHandle = createReorderHandle(headerEl, `Reorder manual action ${action.name || "unnamed action"}`);
-      const setting = new Setting(headerEl)
-        .setName(action.name)
-        .setDesc(`${displayTarget(action)} - ${describeAction(action)} - ${displayResult(action.lastResult)}`)
-        .addButton((button) => button.setButtonText("Preview").onClick(() => new PreviewModal(this.app, this.plugin, action, null, false).open()))
-        .addButton((button) => button.setButtonText("Apply").setCta().onClick(() => new PreviewModal(this.app, this.plugin, action, null, false).open()))
-        .addButton((button) => button.setButtonText("Edit").onClick(() => this.plugin.openManualActionEditor(action)))
-        .addButton((button) => button.setButtonText("Delete").setWarning().onClick(async () => {
-          this.plugin.settings.manualActions = this.plugin.settings.manualActions.filter((item) => item.id !== action.id);
-          await this.plugin.saveSettings();
-          this.display();
-        }));
-      setting.settingEl.addClass("npo-action-setting");
+      const { reorderHandle } = createActionCardHeader(cardEl, action, false);
+      createActionCardSummary(cardEl, action, false);
+      const footerActionsEl = createActionCardFooter(cardEl);
+      createNativeActionButton(footerActionsEl, "Preview", () => new PreviewModal(this.app, this.plugin, action, null, false).open());
+      createNativeActionButton(footerActionsEl, "Apply", () => new PreviewModal(this.app, this.plugin, action, null, false).open(), "cta");
+      createNativeActionButton(footerActionsEl, "Edit", () => this.plugin.openManualActionEditor(action));
+      createNativeActionButton(footerActionsEl, "Delete", async () => {
+        this.plugin.settings.manualActions = this.plugin.settings.manualActions.filter((item) => item.id !== action.id);
+        await this.plugin.saveSettings();
+        this.display();
+      }, "warning");
       reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: action.id });
     }
 
@@ -1203,12 +1225,11 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
 
     for (const action of this.plugin.settings.autoActions) {
       const cardEl = listEl.createDiv({ cls: "npo-action-card npo-reorderable-item" });
-      const headerEl = cardEl.createDiv({ cls: "npo-action-card-header" });
-      const reorderHandle = createReorderHandle(headerEl, `Reorder automatic action ${action.name || "unnamed action"}`);
-      const setting = new Setting(headerEl)
-        .setName(action.name)
-        .setDesc(`${displayAutoTargets(action)} - New or moved Markdown note - ${describeAction(action)} - ${displayResult(action.lastResult)}${displayInitialSyncResult(action)}`)
-        .addToggle((toggle) => toggle.setValue(Boolean(action.enabled)).onChange(async (value) => {
+      const { headerControlsEl, reorderHandle } = createActionCardHeader(cardEl, action, true);
+      createActionCardSummary(cardEl, action, true);
+      const footerActionsEl = createActionCardFooter(cardEl);
+      const toggle = new ToggleComponent(headerControlsEl);
+      toggle.setValue(Boolean(action.enabled)).onChange(async (value) => {
           if (value && !action.enabled && !action.lastInitialSyncAt) {
             const choice = await initialSyncPrompt(this.app);
             if (choice === "cancel") {
@@ -1224,15 +1245,15 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
           action.enabled = value;
           await this.plugin.saveSettings();
           this.display();
-        }))
-        .addButton((button) => button.setButtonText("Sync existing notes").onClick(() => this.plugin.openAutoSyncPreview(action, false)))
-        .addButton((button) => button.setButtonText("Edit").onClick(() => this.plugin.openAutoActionEditor(action)))
-        .addButton((button) => button.setButtonText("Delete").setWarning().onClick(async () => {
-          this.plugin.settings.autoActions = this.plugin.settings.autoActions.filter((item) => item.id !== action.id);
-          await this.plugin.saveSettings();
-          this.display();
-        }));
-      setting.settingEl.addClass("npo-action-setting");
+        });
+      toggle.toggleEl.setAttribute("aria-label", `Enable or disable automatic action ${action.name || "unnamed action"}`);
+      createNativeActionButton(footerActionsEl, "Sync existing notes", () => this.plugin.openAutoSyncPreview(action, false));
+      createNativeActionButton(footerActionsEl, "Edit", () => this.plugin.openAutoActionEditor(action));
+      createNativeActionButton(footerActionsEl, "Delete", async () => {
+        this.plugin.settings.autoActions = this.plugin.settings.autoActions.filter((item) => item.id !== action.id);
+        await this.plugin.saveSettings();
+        this.display();
+      }, "warning");
       reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: action.id });
     }
 
@@ -1281,6 +1302,88 @@ function createReorderHandle(parentEl, label) {
   });
   setIcon(handleEl, "grip-vertical");
   return handleEl;
+}
+
+function createActionCardHeader(cardEl, action, automatic) {
+  const headerEl = cardEl.createDiv({ cls: "npo-action-card-header" });
+  const reorderHandle = createReorderHandle(headerEl, `${automatic ? "Reorder automatic action" : "Reorder manual action"} ${action.name || "unnamed action"}`);
+  headerEl.createDiv({ cls: "npo-action-card-title", text: action.name || "Unnamed action" });
+  const headerControlsEl = headerEl.createDiv({ cls: "npo-action-card-header-controls" });
+  return { headerEl, headerControlsEl, reorderHandle };
+}
+
+function createActionCardSummary(cardEl, action, automatic) {
+  const summary = formatActionCardSummary(action, automatic);
+  const tooltip = formatActionCardSummaryTooltip(action, automatic);
+  return cardEl.createDiv({
+    cls: "npo-action-card-summary",
+    text: summary,
+    attr: { title: tooltip, "aria-label": tooltip }
+  });
+}
+
+function createActionCardFooter(cardEl) {
+  const footerEl = cardEl.createDiv({ cls: "npo-action-card-footer" });
+  return footerEl.createDiv({ cls: "npo-action-card-actions" });
+}
+
+function createNativeActionButton(containerEl, label, onClick, emphasis = "") {
+  const button = new ButtonComponent(containerEl).setButtonText(label);
+  if (emphasis === "cta") button.setCta();
+  if (emphasis === "warning") button.setWarning();
+  button.onClick(onClick);
+  return button;
+}
+
+function formatActionCardSummary(action, automatic) {
+  const lines = [automatic
+    ? `${displayAutoTargets(action)} · New or moved Markdown note · ${describeAction(action)}`
+    : `${displayTarget(action)} · ${describeAction(action)}`];
+  const result = action.lastResult;
+  if (!result) return `${lines[0]}\nNo result yet.`;
+
+  lines.push(...formatActionResultLines(result));
+  if (automatic && action.lastInitialSyncResult && lines.length < 4) {
+    lines.push(`Last sync: ${formatActionCountLine(action.lastInitialSyncResult)}`);
+  }
+  return lines.slice(0, 4).join("\n");
+}
+
+function formatActionCardSummaryTooltip(action, automatic) {
+  const target = automatic
+    ? `${displayAutoTargets(action)} · New or moved Markdown note · ${describeAction(action)}`
+    : `${displayTarget(action)} · ${describeAction(action)}`;
+  const result = action.lastResult ? displayResult(action.lastResult) : "No result yet.";
+  const sync = automatic ? displayInitialSyncResult(action).trim() : "";
+  return [target, result, sync].filter(Boolean).join("\n");
+}
+
+function formatActionResultLines(result) {
+  const lines = [];
+  const failed = result.filesFailed == null ? result.failed || 0 : result.filesFailed;
+  const incompatible = result.skippedIncompatible || 0;
+  const registrySkipped = result.registrySkipped || 0;
+  const registryFailed = result.registryFailed || 0;
+  if (failed || incompatible || registrySkipped || registryFailed) {
+    const issues = [];
+    if (failed) issues.push(`${failed} failed`);
+    if (incompatible) issues.push(`${incompatible} incompatible`);
+    if (registrySkipped || registryFailed) issues.push(`native sync ${registrySkipped} skipped, ${registryFailed} failed`);
+    lines.push(`Status: ${issues.join(", ")}`);
+  }
+  lines.push(`Files: ${formatActionCountLine(result, "files")}`);
+  lines.push(`Operations: ${formatActionCountLine(result, "operations")}`);
+  return lines;
+}
+
+function formatActionCountLine(result, kind = "files") {
+  const changedKey = kind === "operations" ? "operationsChanged" : "filesChanged";
+  const skippedKey = kind === "operations" ? "operationsSkipped" : "filesSkipped";
+  const failedKey = kind === "operations" ? "operationsFailed" : "filesFailed";
+  const changed = result[changedKey] == null ? result.changed || 0 : result[changedKey];
+  const skipped = result[skippedKey] == null ? result.skipped || 0 : result[skippedKey];
+  const failed = result[failedKey] == null ? result.failed || 0 : result[failedKey];
+  return `${changed} changed, ${skipped} skipped, ${failed} failed`;
 }
 
 function wireReorderableList(listEl, reorderItems, options) {
@@ -1758,6 +1861,7 @@ class ActionEditorModal extends Modal {
     this.context = context;
     this.pendingOperationFocusIndex = null;
     this.action = normalizeAction(action || createEmptyAction(kind));
+    this.plugin.canonicalizeActionFolderPaths(this.action);
     if (!action && this.action.operation === ACTIONS.ADD) {
       this.action.overwrite = !this.plugin.settings.addMissingOnly;
     }
@@ -1835,8 +1939,9 @@ class ActionEditorModal extends Modal {
       .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
       .addButton((button) => button.setButtonText("Save").setCta().onClick(async () => {
         const error = validateAction(this.action, this.kind);
-        if (error) {
-          new Notice(error);
+        const referenceError = error || validateActionPropertyReferences(this.action, this.plugin, this.context);
+        if (referenceError) {
+          new Notice(referenceError);
           return;
         }
         try {
@@ -1868,7 +1973,9 @@ class ActionEditorModal extends Modal {
     fieldEl.addClass("npo-operation-section");
     const operations = this.action.operations || (this.action.operations = [defaultOperation(this.action.operation)]);
     const editorModel = buildOperationEditorModel(this.action.operation, operations);
-    const listEl = fieldEl.createDiv({ cls: "npo-operation-list" });
+    const listEl = fieldEl.createDiv({ cls: "npo-operation-list npo-reorderable-list" });
+    listEl.dataset.npoReorderList = `operations-${this.action.id}`;
+    const reorderItems = [];
     if (editorModel.cards.length === 0) {
       listEl.createDiv({ cls: "npo-operation-empty-state", text: "No properties configured." });
     }
@@ -1876,9 +1983,10 @@ class ActionEditorModal extends Modal {
     const candidates = this.plugin.buildPropertyCandidates(this.plugin.resolveTargetFiles(this.action, this.context));
     for (const card of editorModel.cards) {
       const { index, row } = card;
-      const cardEl = listEl.createDiv({ cls: "npo-operation-card" });
+      const cardEl = listEl.createDiv({ cls: "npo-operation-card npo-reorderable-item" });
       cardEl.setAttr("data-operation-index", String(index));
       const headerEl = cardEl.createDiv({ cls: "npo-operation-card-header" });
+      const reorderHandle = createReorderHandle(headerEl, `Reorder Property ${index + 1}`);
       headerEl.createDiv({ cls: "npo-operation-card-title", text: card.title });
       const removeButton = this.createSmallButton(headerEl, "Remove", () => {
         this.action.operations.splice(index, 1);
@@ -1887,26 +1995,34 @@ class ActionEditorModal extends Modal {
       removeButton.addClass("npo-operation-card-remove");
       const fieldsEl = cardEl.createDiv({ cls: "npo-operation-card-fields" });
 
-      const sourceSetting = new Setting(fieldsEl).setName(card.fields[0]);
-      const sourceInput = this.createFullWidthInput(sourceSetting.controlEl, row.propertyName || "");
-      sourceInput.placeholder = this.action.operation === ACTIONS.RENAME ? "Old property name" : "Property name";
-      sourceInput.addEventListener("input", () => {
-        row.propertyName = sourceInput.value.trim();
-        if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
-          row.propertyType = this.plugin.getPropertyType(row.propertyName, row.propertyType || PROPERTY_TYPES.TEXT);
-        }
-      });
-      new PropertyInputSuggest(sourceInput, () => filterOperationPropertyCandidates(
-        candidates,
-        this.action.operations,
-        index
-      ), (candidate) => {
-        row.propertyName = candidate.name;
-        if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
-          row.propertyType = this.plugin.getPropertyType(candidate.name, row.propertyType || PROPERTY_TYPES.TEXT);
-        }
-        this.rerenderPreservingScroll();
-      });
+      const binding = resolveActionPropertyReference(row, this.plugin, candidates);
+      let sourceInput = null;
+      if (binding || row.propertyReferenceKind) {
+        this.renderLockedPropertyReference(fieldsEl, row, binding, index, card.fields[0]);
+      } else {
+        const sourceSetting = new Setting(fieldsEl).setName(card.fields[0]);
+        sourceInput = this.createFullWidthInput(sourceSetting.controlEl, row.propertyName || "");
+        sourceInput.placeholder = this.action.operation === ACTIONS.RENAME ? "Old property name" : "Property name";
+        sourceInput.addEventListener("input", () => {
+          row.propertyName = sourceInput.value.trim();
+          delete row.propertyId;
+          delete row.propertyReferenceKind;
+          row.propertyNameSnapshot = row.propertyName;
+          if (this.action.operation !== ACTIONS.REMOVE && this.action.operation !== ACTIONS.RENAME) {
+            row.propertyType = this.plugin.getPropertyType(row.propertyName, row.propertyType || PROPERTY_TYPES.TEXT);
+          }
+        });
+        new PropertyInputSuggest(sourceInput, () => filterOperationPropertyCandidates(
+          candidates,
+          this.action.operations,
+          index
+        ), (candidate) => {
+          const selected = resolveActionPropertyReference(Object.assign({}, row, { propertyName: candidate.name }), this.plugin, candidates);
+          bindActionPropertyReference(row, selected || { name: candidate.name, type: candidate.type, kind: "detected" });
+          if (this.action.operation !== ACTIONS.TYPE && selected) row.propertyType = selected.type;
+          this.rerenderPreservingScroll();
+        });
+      }
 
       if (this.pendingOperationFocusIndex === index) {
         this.pendingOperationFocusIndex = null;
@@ -1924,17 +2040,44 @@ class ActionEditorModal extends Modal {
 
       if (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET || this.action.operation === ACTIONS.TYPE) {
         const typeSetting = new Setting(fieldsEl).setName(this.action.operation === ACTIONS.TYPE ? "Target type" : "Type");
-        typeSetting.addDropdown((dropdown) => {
+        if (binding && this.action.operation !== ACTIONS.TYPE) {
+          typeSetting.setDesc(`Current type: ${binding.type}`);
+        } else if (this.action.operation === ACTIONS.TYPE && binding) {
+          typeSetting.setDesc(`Current type: ${binding.type}`);
+          typeSetting.addDropdown((dropdown) => {
+            for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
+            dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
+              row.propertyType = value;
+              this.rerenderPreservingScroll();
+            });
+          });
+        } else {
+          typeSetting.addDropdown((dropdown) => {
           for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
           dropdown.setValue(row.propertyType || PROPERTY_TYPES.TEXT).onChange((value) => {
             row.propertyType = value;
             this.rerenderPreservingScroll();
           });
-        });
+          });
+        }
         if (this.action.operation !== ACTIONS.TYPE) this.addOperationValueEditor(fieldsEl, row);
         else this.addTypeConversionOptions(fieldsEl, row);
       }
+      reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: row.id });
     }
+
+    wireReorderableList(listEl, reorderItems, {
+      listKey: `operations-${this.action.id}`,
+      label: "property operation",
+      getItems: () => this.action.operations,
+      commit: async (items) => {
+        this.action.operations = items;
+      },
+      restore: (items) => {
+        this.action.operations = items;
+      },
+      onRender: () => this.rerenderPreservingScroll()
+    });
 
     const addButtonContainer = fieldEl.createDiv({ cls: "npo-operation-add-button" });
     this.createSmallButton(addButtonContainer, editorModel.addButtonLabel, () => {
@@ -1972,6 +2115,35 @@ class ActionEditorModal extends Modal {
         if (type === PROPERTY_TYPES.DATE) text.inputEl.type = "date";
         if (type === PROPERTY_TYPES.DATETIME) text.inputEl.type = "datetime-local";
       });
+  }
+
+  renderLockedPropertyReference(containerEl, row, binding, index, fieldLabel) {
+    const referenceEl = containerEl.createDiv({ cls: "npo-locked-property-reference" });
+    referenceEl.createDiv({ cls: "npo-locked-property-label", text: fieldLabel });
+    referenceEl.createDiv({
+      cls: binding ? "npo-locked-property-name" : "npo-locked-property-unresolved",
+      text: binding ? binding.name : `Unresolved property: ${row.propertyName || row.propertyNameSnapshot || "(missing)"}`
+    });
+    referenceEl.createDiv({
+      cls: "npo-locked-property-type",
+      text: `Type: ${binding ? binding.type : "Review required"}`
+    });
+    if (binding && (this.action.operation === ACTIONS.ADD || this.action.operation === ACTIONS.SET) && row.propertyType !== binding.type) {
+      referenceEl.createDiv({
+        cls: "npo-locked-property-review",
+        text: `Review required: stored operation type is ${row.propertyType}; current property type is ${binding.type}.`
+      });
+    }
+    const changeButton = this.createSmallButton(referenceEl, "Change property", () => {
+      row.propertyName = "";
+      row.propertyNameSnapshot = "";
+      row.propertyType = row.propertyType || PROPERTY_TYPES.TEXT;
+      delete row.propertyId;
+      delete row.propertyReferenceKind;
+      this.pendingOperationFocusIndex = index;
+      this.rerenderPreservingScroll({ focusOperationIndex: index });
+    });
+    changeButton.addClass("npo-operation-change-property");
   }
 
   addTypeConversionOptions(containerEl, row) {
@@ -2060,9 +2232,10 @@ class ActionEditorModal extends Modal {
   }
 
   setEditorTargets(targets, automatic) {
-    if (automatic) this.action.autoTargets = uniqueTargets(targets);
+    const canonicalTargets = canonicalizeTargetsWithPath(targets, (path) => this.plugin.canonicalizeFolderPath(path));
+    if (automatic) this.action.autoTargets = canonicalTargets;
     else {
-      this.action.targets = uniqueTargets(targets);
+      this.action.targets = canonicalTargets;
       this.action.targetType = TARGETS.SPECIFIC_TARGETS;
     }
   }
@@ -2073,16 +2246,16 @@ class ActionEditorModal extends Modal {
     const inputEl = this.createFullWidthInput(fieldEl, "");
     let pending = "";
     inputEl.addEventListener("input", () => {
-      pending = type === TARGETS.FOLDER ? normalizeFolderPath(inputEl.value) : inputEl.value.trim();
+      pending = type === TARGETS.FOLDER ? this.plugin.canonicalizeFolderPath(inputEl.value) : inputEl.value.trim();
     });
     const addTarget = (path) => {
-      const normalized = type === TARGETS.FOLDER ? normalizeFolderPath(path) : String(path || "").trim();
+      const normalized = type === TARGETS.FOLDER ? this.plugin.canonicalizeFolderPath(path) : String(path || "").trim();
       if (!normalized) {
         new Notice(`${label} path is required.`);
         return;
       }
       const targets = automatic ? (this.action.autoTargets || []) : (this.action.targets || []);
-      if (targets.some((target) => target.type === type && target.path === normalized)) {
+      if (targets.some((target) => target.type === type && target.path.toLocaleLowerCase() === normalized.toLocaleLowerCase())) {
         new Notice(`${type === TARGETS.FOLDER ? "Folder" : "File"} target is already selected.`);
         return;
       }
@@ -2099,10 +2272,14 @@ class ActionEditorModal extends Modal {
   filterAvailableTargets(targets, type, options) {
     const existing = new Set((targets || [])
       .filter((target) => target.type === type)
-      .map((target) => type === TARGETS.FOLDER ? normalizeFolderPath(target.path) : String(target.path || "").trim()));
+      .map((target) => {
+        const normalized = type === TARGETS.FOLDER ? this.plugin.canonicalizeFolderPath(target.path) : String(target.path || "").trim();
+        return type === TARGETS.FOLDER ? normalized.toLocaleLowerCase() : normalized;
+      }));
     return options.filter((option) => {
-      const normalized = type === TARGETS.FOLDER ? normalizeFolderPath(option) : String(option || "").trim();
-      return normalized && !existing.has(normalized);
+      const normalized = type === TARGETS.FOLDER ? this.plugin.canonicalizeFolderPath(option) : String(option || "").trim();
+      const key = type === TARGETS.FOLDER ? normalized.toLocaleLowerCase() : normalized;
+      return normalized && !existing.has(key);
     });
   }
 
@@ -2139,6 +2316,7 @@ class ActionEditorModal extends Modal {
 
   async saveAction() {
     const action = normalizeAction(this.action);
+    this.plugin.canonicalizeActionFolderPaths(action);
     if (this.kind === "auto") {
       const index = this.plugin.settings.autoActions.findIndex((item) => item.id === action.id);
       if (index >= 0) this.plugin.settings.autoActions[index] = action;
@@ -2168,7 +2346,8 @@ class PreviewModal extends Modal {
   }
 
   async onOpen() {
-    const error = validateAction(this.action, this.action.trigger ? "auto" : "manual");
+    const error = validateAction(this.action, this.action.trigger ? "auto" : "manual")
+      || validateActionPropertyReferences(this.action, this.plugin, this.context);
     if (error) {
       new Notice(error);
       this.close();
@@ -2204,7 +2383,8 @@ class PreviewModal extends Modal {
   }
 
   async apply() {
-    const validationError = validateAction(this.action, this.action.trigger ? "auto" : "manual");
+    const validationError = validateAction(this.action, this.action.trigger ? "auto" : "manual")
+      || validateActionPropertyReferences(this.action, this.plugin, this.context);
     if (validationError) {
       new Notice(validationError);
       return;
@@ -2573,10 +2753,11 @@ function initialSyncPrompt(app) {
 
 function normalizeSettings(settings) {
   const source = settings || {};
+  const properties = normalizeProperties(source.properties || migrateProperties(source.propertyNames || []));
   const normalized = Object.assign({}, source, {
-    properties: normalizeProperties(source.properties || migrateProperties(source.propertyNames || [])),
-    manualActions: (source.manualActions || migrateActions(source.savedActions || [], "manual")).map((action) => normalizeAction(action, "manual")),
-    autoActions: (source.autoActions || migrateActions(source.folderRules || [], "auto")).map((action) => normalizeAction(action, "auto")),
+    properties,
+    manualActions: (source.manualActions || migrateActions(source.savedActions || [], "manual")).map((action) => normalizeAction(action, "manual", properties)),
+    autoActions: (source.autoActions || migrateActions(source.folderRules || [], "auto")).map((action) => normalizeAction(action, "auto", properties)),
     excludedFolders: uniqueStrings((source.excludedFolders || []).map(normalizePathInput).filter(Boolean)),
     addMissingOnly: source.addMissingOnly !== false,
     confirmOverwrite: source.confirmOverwrite !== false,
@@ -2594,6 +2775,15 @@ function needsActionMigration(settings) {
   if ((source.autoActions || []).some((action) => action && action.autoTargets == null && action.targets != null)) return true;
   return [source.manualActions, source.autoActions].some((actions) => (actions || []).some((action) => {
     if (!Array.isArray(action.operations)) return true;
+    if (action.operations.some((row) => !row || !row.id)) return true;
+    const operationIds = new Set();
+    if (action.operations.some((row) => {
+      if (operationIds.has(row.id)) return true;
+      operationIds.add(row.id);
+      return false;
+    })) return true;
+    const configuredNames = new Set((source.properties || []).map((property) => String(property && property.name || "")));
+    if (action.operations.some((row) => row && configuredNames.has(String(row.propertyName || "")) && !row.propertyId)) return true;
     if (["propertyName", "newPropertyName", "propertyType", "value", "valueType"].some((field) => Object.prototype.hasOwnProperty.call(action, field))) return true;
     if (targetsNeedMigration(action.targets) || targetsNeedMigration(action.autoTargets)) return true;
     if (!Array.isArray(action.targets) && (action.targetFolder || action.targetPath)) return true;
@@ -2693,7 +2883,7 @@ function createEmptyAction(kind) {
   };
 }
 
-function normalizeAction(action, explicitKind = null) {
+function normalizeAction(action, explicitKind = null, properties = []) {
   const kind = explicitKind || (action && action.trigger ? "auto" : "manual");
   const base = Object.assign(createEmptyAction(kind), action || {});
   base.id = base.id || createId();
@@ -2717,6 +2907,7 @@ function normalizeAction(action, explicitKind = null) {
   if (!base.trigger && base.targets.length > 0) base.targetType = TARGETS.SPECIFIC_TARGETS;
   base.operations = Array.isArray(action && action.operations) ? action.operations : null;
   base.operations = normalizeOperations(base);
+  normalizeOperationPropertyReferences(base, properties);
   base.overwrite = Boolean(base.overwrite);
   base.addIfMissing = Boolean(base.addIfMissing);
   if (kind === "auto" || base.trigger) {
@@ -2738,22 +2929,50 @@ function normalizeAction(action, explicitKind = null) {
   return base;
 }
 
+function normalizeOperationPropertyReferences(action, properties) {
+  const configuredProperties = Array.isArray(properties) ? properties : [];
+  for (const row of action.operations || []) {
+    const configured = (row.propertyId
+      ? configuredProperties.find((property) => property.id === row.propertyId)
+      : null)
+      || configuredProperties.find((property) => property.name === row.propertyName);
+    if (configured) {
+      bindActionPropertyReference(row, {
+        id: configured.id,
+        name: configured.name,
+        type: configured.type,
+        kind: "configured"
+      });
+      continue;
+    }
+    const requiresExisting = action.operation === ACTIONS.REMOVE
+      || action.operation === ACTIONS.RENAME
+      || action.operation === ACTIONS.TYPE
+      || (action.operation === ACTIONS.SET && !action.addIfMissing);
+    if (requiresExisting && row.propertyName && !row.propertyReferenceKind) {
+      row.propertyNameSnapshot = row.propertyName;
+      row.propertyReferenceKind = "unresolved";
+    }
+  }
+}
+
 function normalizeOperationName(operation) {
   if (operation === "change-type" || operation === "changeType" || operation === "type-change") return ACTIONS.TYPE;
   return Object.values(ACTIONS).includes(operation) ? operation : ACTIONS.ADD;
 }
 
 function defaultOperation(operation) {
-  if (operation === ACTIONS.REMOVE) return { propertyName: "" };
-  if (operation === ACTIONS.RENAME) return { propertyName: "", newPropertyName: "" };
+  if (operation === ACTIONS.REMOVE) return { id: createId(), propertyName: "" };
+  if (operation === ACTIONS.RENAME) return { id: createId(), propertyName: "", newPropertyName: "" };
   if (operation === ACTIONS.TYPE) return {
+    id: createId(),
     propertyName: "",
     propertyType: PROPERTY_TYPES.TEXT,
     normalizeValues: true,
     dateSourceFormat: "auto",
     dateOnlyToMidnight: false
   };
-  return { propertyName: "", propertyType: PROPERTY_TYPES.TEXT, value: "" };
+  return { id: createId(), propertyName: "", propertyType: PROPERTY_TYPES.TEXT, value: "" };
 }
 
 function operationCardFieldLabels(operation, row = {}) {
@@ -2766,6 +2985,43 @@ function operationCardFieldLabels(operation, row = {}) {
     return labels;
   }
   return ["Property", "Type", "Value"];
+}
+
+function resolveActionPropertyReference(row, plugin, candidates) {
+  const properties = plugin && plugin.settings && Array.isArray(plugin.settings.properties)
+    ? plugin.settings.properties
+    : [];
+  const configured = (row && row.propertyId
+    ? properties.find((property) => property.id === row.propertyId)
+    : null)
+    || properties.find((property) => property.name === String(row && row.propertyName || "").trim());
+  if (configured) {
+    return {
+      id: configured.id,
+      name: configured.name,
+      type: configured.type,
+      kind: "configured"
+    };
+  }
+  const detected = (candidates || []).find((candidate) => candidate && candidate.name === String(row && row.propertyName || "").trim());
+  if (detected) {
+    return {
+      name: detected.name,
+      type: detected.type || detected.inferredType || PROPERTY_TYPES.TEXT,
+      kind: "detected"
+    };
+  }
+  return null;
+}
+
+function bindActionPropertyReference(row, binding) {
+  if (!row || !binding) return row;
+  row.propertyName = binding.name;
+  row.propertyNameSnapshot = binding.name;
+  row.propertyReferenceKind = binding.kind;
+  if (binding.id) row.propertyId = binding.id;
+  else delete row.propertyId;
+  return row;
 }
 
 function buildOperationEditorModel(operation, operations) {
@@ -2785,11 +3041,11 @@ function convertOperationsForOperation(rows, fromOperation, toOperation) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   if (fromOperation === toOperation) return sourceRows;
   if (toOperation === ACTIONS.REMOVE) {
-    return sourceRows.map((row) => ({ propertyName: String(row.propertyName || "").trim() }));
+    return sourceRows.map((row) => Object.assign({}, row, { propertyName: String(row.propertyName || "").trim() }));
   }
   if (toOperation === ACTIONS.RENAME) {
     if (fromOperation === ACTIONS.RENAME) {
-      return sourceRows.map((row) => ({
+      return sourceRows.map((row) => Object.assign({}, row, {
         propertyName: String(row.propertyName || "").trim(),
         newPropertyName: String(row.newPropertyName || "").trim()
       }));
@@ -2801,7 +3057,7 @@ function convertOperationsForOperation(rows, fromOperation, toOperation) {
     return [defaultOperation(ACTIONS.TYPE)];
   }
   if ((toOperation === ACTIONS.ADD || toOperation === ACTIONS.SET) && (fromOperation === ACTIONS.ADD || fromOperation === ACTIONS.SET)) {
-    return sourceRows.map((row) => ({
+    return sourceRows.map((row) => Object.assign({}, row, {
       propertyName: String(row.propertyName || "").trim(),
       propertyType: Object.values(PROPERTY_TYPES).includes(row.propertyType) ? row.propertyType : PROPERTY_TYPES.TEXT,
       value: row.value == null ? "" : row.value
@@ -2835,25 +3091,29 @@ function normalizeOperations(action) {
     }
   }
 
+  const seenIds = new Set();
   return incoming.map((row) => {
     const source = row || {};
-    if (operation === ACTIONS.REMOVE) return { propertyName: String(source.propertyName || source.name || "").trim() };
-    if (operation === ACTIONS.RENAME) return {
+    const id = source.id && !seenIds.has(source.id) ? source.id : createId();
+    seenIds.add(id);
+    const normalized = Object.assign({}, source, { id });
+    if (operation === ACTIONS.REMOVE) return Object.assign(normalized, { propertyName: String(source.propertyName || source.name || "").trim() });
+    if (operation === ACTIONS.RENAME) return Object.assign(normalized, {
       propertyName: String(source.propertyName || source.oldName || source.name || "").trim(),
       newPropertyName: String(source.newPropertyName || source.newName || source.destination || "").trim()
-    };
-    if (operation === ACTIONS.TYPE) return {
+    });
+    if (operation === ACTIONS.TYPE) return Object.assign(normalized, {
       propertyName: String(source.propertyName || source.name || source.oldName || "").trim(),
       propertyType: Object.values(PROPERTY_TYPES).includes(source.propertyType || source.newType) ? (source.propertyType || source.newType) : PROPERTY_TYPES.TEXT,
       normalizeValues: source.normalizeValues !== false,
       dateSourceFormat: ["auto", "ymd", "dmy", "mdy"].includes(source.dateSourceFormat) ? source.dateSourceFormat : "auto",
       dateOnlyToMidnight: Boolean(source.dateOnlyToMidnight)
-    };
-    return {
+    });
+    return Object.assign(normalized, {
       propertyName: String(source.propertyName || source.name || "").trim(),
       propertyType: Object.values(PROPERTY_TYPES).includes(source.propertyType || source.type) ? (source.propertyType || source.type) : PROPERTY_TYPES.TEXT,
       value: source.value == null ? "" : source.value
-    };
+    });
   });
 }
 
@@ -2890,12 +3150,20 @@ function uniqueTargets(targets) {
   const seen = new Set();
   const result = [];
   for (const target of targets || []) {
-    const key = `${target.type}:${target.path}`;
+    const key = `${target.type}:${target.type === TARGETS.FOLDER ? target.path.toLocaleLowerCase() : target.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(target);
   }
   return result;
+}
+
+function canonicalizeTargetsWithPath(targets, canonicalizeFolder) {
+  return uniqueTargets((targets || []).map((target) => {
+    if (!target || typeof target !== "object") return target;
+    if (target.type !== TARGETS.FOLDER) return target;
+    return Object.assign({}, target, { path: canonicalizeFolder(target.path) });
+  }));
 }
 
 function autoTargetFromLegacy(action) {
@@ -2948,6 +3216,32 @@ function validateAction(action, kind) {
   if (kind === "auto" && (!action.autoTargets || action.autoTargets.length === 0)) return "Add at least one target.";
   if (kind !== "auto" && action.targetType === TARGETS.SPECIFIC_TARGETS && (!action.targets || action.targets.length === 0)) {
     return "Add at least one target.";
+  }
+  return "";
+}
+
+function validateActionPropertyReferences(action, plugin, context = null) {
+  const files = plugin && typeof plugin.resolveTargetFiles === "function"
+    ? plugin.resolveTargetFiles(action, context)
+    : [];
+  const candidates = plugin && typeof plugin.buildPropertyCandidates === "function"
+    ? plugin.buildPropertyCandidates(files)
+    : [];
+  const operations = normalizeOperations(action);
+  for (const [index, row] of operations.entries()) {
+    const binding = resolveActionPropertyReference(row, plugin, candidates);
+    const requiresExisting = action.operation === ACTIONS.REMOVE
+      || action.operation === ACTIONS.RENAME
+      || action.operation === ACTIONS.TYPE
+      || (action.operation === ACTIONS.SET && !action.addIfMissing);
+    if (row.propertyReferenceKind && !binding) return `Property ${index + 1} requires review: its selected property is no longer available.`;
+    if (requiresExisting && !binding) return `Property ${index + 1} requires an exact existing property selection: ${row.propertyName}.`;
+    if (binding && !row.propertyReferenceKind && (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET)) {
+      return `Property ${index + 1} matches existing property ${binding.name}; select it explicitly or choose a new property name.`;
+    }
+    if (binding && (action.operation === ACTIONS.ADD || action.operation === ACTIONS.SET) && row.propertyType !== binding.type) {
+      return `Property ${index + 1} requires review: ${binding.name} is now type ${binding.type}, but this operation stores ${row.propertyType}.`;
+    }
   }
   return "";
 }
@@ -3576,6 +3870,13 @@ function normalizeFolderPath(value) {
   return normalizePathInput(raw);
 }
 
+function canonicalFolderPath(value, folderPaths) {
+  const normalized = normalizeFolderPath(value);
+  if (normalized === "/") return "/";
+  const matches = (folderPaths || []).filter((path) => String(path).toLocaleLowerCase() === normalized.toLocaleLowerCase());
+  return matches.length === 1 ? matches[0] : normalized;
+}
+
 function parentPathFromPath(path) {
   const normalized = String(path || "").split("/");
   normalized.pop();
@@ -3586,7 +3887,9 @@ function folderTargetMatchesPath(target, parentPath) {
   const targetPath = normalizeFolderPath(target.path);
   const normalizedParent = normalizeFolderPath(parentPath);
   if (targetPath === "/") return true;
-  return normalizedParent === targetPath || normalizedParent.startsWith(`${targetPath}/`);
+  const targetKey = targetPath.toLocaleLowerCase();
+  const parentKey = normalizedParent.toLocaleLowerCase();
+  return parentKey === targetKey || parentKey.startsWith(`${targetKey}/`);
 }
 
 function targetMatchesPath(target, filePath) {
@@ -3630,6 +3933,8 @@ export {
   applyOperations,
   buildActionPreviewState,
   buildOperationEditorModel,
+  canonicalFolderPath,
+  canonicalizeTargetsWithPath,
   calculateInlineSuggestHorizontalGeometry,
   calculateInlineSuggestVerticalGeometry,
   captureModalScrollState,
@@ -3638,6 +3943,8 @@ export {
   defaultOperation,
   emptyResult,
   evaluateOperations,
+  formatActionCardSummary,
+  formatActionCardSummaryTooltip,
   filterExistingPropertyCandidates,
   filterInlineSuggestItems,
   filterOperationPropertyCandidates,
@@ -3649,11 +3956,15 @@ export {
   normalizeSettings,
   normalizeOperations,
   normalizeTargets,
+  normalizeOperationPropertyReferences,
+  resolveActionPropertyReference,
   restoreModalScrollState,
   revealOperationCardWithoutJump,
   moveItemByOffset,
   moveItemToIndex,
   reorderById,
   targetMatchesPath,
-  validateAction
+  uniqueTargets,
+  validateAction,
+  validateActionPropertyReferences
 };

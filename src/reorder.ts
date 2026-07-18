@@ -8,6 +8,9 @@ export function reorderById<T extends { id?: string }>(
 ): T[] {
   if (!Array.isArray(items) || draggedId === targetId) return items;
 
+  const sourceMatches = items.reduce((count, item) => count + (item && item.id === draggedId ? 1 : 0), 0);
+  const targetMatches = items.reduce((count, item) => count + (item && item.id === targetId ? 1 : 0), 0);
+  if (sourceMatches !== 1 || targetMatches !== 1) return items;
   const sourceIndex = items.findIndex((item) => item && item.id === draggedId);
   const targetIndex = items.findIndex((item) => item && item.id === targetId);
   if (sourceIndex < 0 || targetIndex < 0) return items;
@@ -23,6 +26,8 @@ export function reorderById<T extends { id?: string }>(
 export function moveItemByOffset<T extends { id?: string }>(items: T[], itemId: string, offset: number): T[] {
   if (!Number.isInteger(offset) || offset === 0 || !Array.isArray(items)) return items;
 
+  const currentMatches = items.reduce((count, item) => count + (item && item.id === itemId ? 1 : 0), 0);
+  if (currentMatches !== 1) return items;
   const currentIndex = items.findIndex((item) => item && item.id === itemId);
   if (currentIndex < 0) return items;
 
@@ -34,6 +39,8 @@ export function moveItemByOffset<T extends { id?: string }>(items: T[], itemId: 
 export function moveItemToIndex<T extends { id?: string }>(items: T[], itemId: string, targetIndex: number): T[] {
   if (!Array.isArray(items) || !Number.isInteger(targetIndex)) return items;
 
+  const currentMatches = items.reduce((count, item) => count + (item && item.id === itemId ? 1 : 0), 0);
+  if (currentMatches !== 1) return items;
   const currentIndex = items.findIndex((item) => item && item.id === itemId);
   if (currentIndex < 0 || targetIndex < 0 || targetIndex >= items.length || currentIndex === targetIndex) return items;
 
