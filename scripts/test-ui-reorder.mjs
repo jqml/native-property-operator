@@ -55,6 +55,28 @@ const {
   validateActionPropertyReferences
 } = pluginModule;
 
+// Vault-wide usage must include excluded targets and keys with empty/false values.
+const usagePlugin = Object.create(pluginModule.default.prototype);
+usagePlugin.settings = { properties: [{ name: "unused", type: PROPERTY_TYPES.TEXT }, { name: "status", type: PROPERTY_TYPES.TEXT }] };
+const usageFiles = [{ path: "included.md" }, { path: "excluded/note.md" }, { path: "empty.md" }];
+const usageCaches = [{ frontmatter: { status: "", done: false, position: {} } }, { frontmatter: { status: null, done: true } }, {}];
+usagePlugin.app = {
+  vault: { getMarkdownFiles: () => usageFiles },
+  metadataCache: { getFileCache: (file) => usageCaches[usageFiles.indexOf(file)] }
+};
+usagePlugin.getVisibleMarkdownFiles = () => { throw new Error("Usage must not depend on action exclusions"); };
+const usage = new Map(usagePlugin.scanVaultProperties().map((entry) => [entry.name, entry.count]));
+assert.equal(usage.get("status"), 2, "empty and null values still count as property usage");
+assert.equal(usage.get("done"), 2, "checkbox false counts once per note");
+assert.equal(usage.get("unused"), 0, "unused catalog properties explicitly report zero");
+assert.equal(usage.has("position"), false, "metadata cache position is not a property");
+usagePlugin.readNativePropertyTypes = async () => ({ types: { retired: "number", status: "multitext" } });
+const registryProperties = await usagePlugin.getExistingProperties();
+assert.equal(registryProperties.find((entry) => entry.name === "retired").count, 0, "unused native properties are available with zero usage");
+assert.equal(registryProperties.find((entry) => entry.name === "retired").inferredType, PROPERTY_TYPES.NUMBER);
+assert.equal(registryProperties.find((entry) => entry.name === "status").inferredType, PROPERTY_TYPES.LIST, "native registry type takes priority over inference");
+assert.equal(filterExistingPropertyCandidates(registryProperties, "", [" STATUS "]).some((entry) => entry.name === "status"), false, "case and whitespace variants cannot duplicate the catalog");
+
 function ids(items) {
   return items.map((item) => item.id);
 }
@@ -239,7 +261,7 @@ assert.equal(automaticOrdered.lastRunKey, "run-1", "operation reorder does not a
 
 assert.match(source, /rowEl\.createDiv\(\{ cls: "npo-existing-property-result-title"/);
 assert.match(source, /rowEl\.createDiv\(\{[\s\S]*npo-existing-property-result-meta/);
-assert.match(source, /rowEl\.createDiv\(\{[\s\S]*npo-existing-property-result-examples/);
+assert.doesNotMatch(source, /rowEl\.createDiv\(\{[\s\S]*npo-existing-property-result-examples/, "property options contain only name and type/usage lines");
 assert.doesNotMatch(source, /text: formatExistingPropertyCandidate\(item\)/, "browser no longer uses one flat candidate text node");
 assert.match(source, /resultsEl = contentEl\.createDiv\(\{[\s\S]*role: "listbox"/);
 assert.match(source, /rowEl = this\.resultsEl\.createDiv\(\{[\s\S]*role: "option"/);
@@ -309,6 +331,15 @@ assert.match(styles, /\.npo-existing-property-result\s*\{[\s\S]*height: auto/);
 assert.match(styles, /\.npo-existing-property-result-title/);
 assert.match(styles, /\.npo-reorder-handle/);
 assert.match(styles, /\.npo-reorder-target-before/);
+assert.match(source, /this\.modalEl\.addClass\("npo-action-editor-modal"\)/);
+assert.match(source, /renderManualTargetDetails\(targetDetailsEl\)/);
+assert.match(source, /this\.anchorModalTop\(modalTop\)/);
+const manualTargetEditor = source.slice(source.indexOf("  addManualTargetSetting(contentEl)"), source.indexOf("  addAutoTargetsSetting(contentEl)"));
+assert.match(manualTargetEditor, /targetDetailsEl\.empty\(\)/);
+assert.match(manualTargetEditor, /if \(this\.action\.targetType === TARGETS\.SPECIFIC_TARGETS\) this\.addSpecificTargetsSetting\(targetDetailsEl\)/);
+assert.doesNotMatch(manualTargetEditor, /rerenderPreservingScroll/, "target changes update only their dependent region");
+assert.match(styles, /\.modal\.npo-action-editor-modal\.npo-action-editor-top-anchored/);
+assert.match(styles, /\.npo-manual-target-details:empty/);
 assert.match(styles, /\.npo-action-card-header\s*\{[\s\S]*flex-wrap: wrap/);
 const summaryCss = styles.slice(styles.indexOf(".npo-action-card-summary"), styles.indexOf(".npo-action-card-footer"));
 assert.match(summaryCss, /display:\s*-webkit-box/);

@@ -8,7 +8,8 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "lint": "eslint .",
     "check": "npm run lint && npm run test && tsc -noEmit -skipLibCheck",
-    "test": "npm run build && node scripts/test-conversions.mjs && node scripts/test-multi-property.mjs && node scripts/test-ui-reorder.mjs"
+    "test": "npm run build && node scripts/test-conversions.mjs && node scripts/test-multi-property.mjs && node scripts/test-ui-reorder.mjs",
+    "deploy:pro": "npm run check && node scripts/deploy-pro.mjs"
   },
   "keywords": [
     "obsidian",

@@ -78,6 +78,12 @@ const TARGET_LABELS = {
   [TARGETS.SPECIFIC_TARGETS]: "Specific targets"
 };
 
+const MANUAL_TARGET_OPTIONS = [
+  { value: TARGETS.SPECIFIC_TARGETS, label: TARGET_LABELS[TARGETS.SPECIFIC_TARGETS] },
+  { value: TARGETS.CURRENT_FOLDER, label: TARGET_LABELS[TARGETS.CURRENT_FOLDER] },
+  { value: TARGETS.CURRENT_FILE, label: TARGET_LABELS[TARGETS.CURRENT_FILE] }
+];
+
 export default class NativePropertyOperatorPlugin extends Plugin {
   async onload() {
     const loadedData = await this.loadData();
@@ -418,14 +424,15 @@ export default class NativePropertyOperatorPlugin extends Plugin {
     return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  scanDetectedProperties() {
-    const catalogNames = new Set(this.settings.properties.map((property) => property.name));
-    const byName = new Map();
-    for (const file of this.getVisibleMarkdownFiles()) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      const frontmatter = cache && cache.frontmatter ? cache.frontmatter : {};
+  // Usage describes the whole vault, independently of action targets/exclusions.
+  scanVaultProperties() {
+    const byName = new Map(this.settings.properties.map((property) => [property.name, {
+      name: property.name, count: 0, values: [], examples: [], inferredType: property.type
+    }]));
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
       for (const [name, value] of Object.entries(frontmatter)) {
-        if (name === "position" || catalogNames.has(name)) continue;
+        if (name === "position") continue;
         const current = byName.get(name) || { name, count: 0, values: [], examples: [] };
         current.count += 1;
         if (current.values.length < 25) current.values.push(value);
@@ -434,8 +441,25 @@ export default class NativePropertyOperatorPlugin extends Plugin {
       }
     }
     return Array.from(byName.values())
-      .map((entry) => Object.assign(entry, { inferredType: inferPropertyType(entry.name, entry.values) }))
+      .map((entry) => Object.assign(entry, { inferredType: entry.inferredType || inferPropertyType(entry.name, entry.values) }))
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  scanDetectedProperties() {
+    const catalogNames = new Set(this.settings.properties.map((property) => propertyNameKey(property.name)));
+    return this.scanVaultProperties().filter((entry) => !catalogNames.has(propertyNameKey(entry.name)));
+  }
+
+  async getExistingProperties() {
+    const byName = new Map(this.scanVaultProperties().map((entry) => [entry.name, entry]));
+    const registry = await this.readNativePropertyTypes();
+    for (const [name, type] of Object.entries(registry.types)) {
+      const existing = byName.get(name);
+      const inferredType = propertyTypeFromNativeType(type);
+      if (existing) existing.inferredType = inferredType;
+      else byName.set(name, { name, count: 0, examples: [], inferredType });
+    }
+    return Array.from(byName.values());
   }
 
   previewCatalogChange(change) {
@@ -854,33 +878,11 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    this.renderBreadcrumb(containerEl);
     this.renderRootNav(containerEl);
     if (this.section === "General") this.renderGeneral(containerEl);
     if (this.section === "Properties") this.renderProperties(containerEl);
     if (this.section === "Manual actions") this.renderManualActions(containerEl);
     if (this.section === "Auto actions") this.renderAutoActions(containerEl);
-  }
-
-  renderBreadcrumb(containerEl) {
-    const breadcrumbEl = containerEl.createDiv();
-    breadcrumbEl.addClass("native-property-operator-style-001");
-    breadcrumbEl.addClass("native-property-operator-style-002");
-    breadcrumbEl.addClass("native-property-operator-style-003");
-    breadcrumbEl.addClass("native-property-operator-style-004");
-    breadcrumbEl.createEl("button", { text: "Native Property Operator" }, (button) => {
-      button.addEventListener("click", () => this.openSection("General"));
-    });
-    breadcrumbEl.createSpan({ text: ">" });
-    if (this.section === "General") {
-      breadcrumbEl.createEl("button", { text: "General" }, (button) => {
-        button.disabled = true;
-      });
-      return;
-    }
-    breadcrumbEl.createEl("button", { text: this.section }, (button) => {
-      button.disabled = true;
-    });
   }
 
   renderRootNav(containerEl) {
@@ -1014,6 +1016,8 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
   }
 
   renderProperties(containerEl) {
+    const usage = new Map(this.plugin.scanVaultProperties().map((entry) => [entry.name, entry.count]));
+    containerEl.createEl("p", { text: "Usage counts cover all Markdown notes in this vault, including folders excluded from actions." });
     if (this.plugin.settings.properties.length === 0) {
       containerEl.createEl("p", { text: "No properties configured." });
     }
@@ -1025,50 +1029,28 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
     for (const property of this.plugin.settings.properties) {
       let nextName = property.name;
       let nextType = property.type;
-      const cardEl = containerEl.createDiv({ cls: "npo-property-card" });
-      listEl.appendChild(cardEl);
-      cardEl.addClass("native-property-operator-style-016");
-      cardEl.addClass("native-property-operator-style-017");
-      cardEl.addClass("native-property-operator-style-018");
-      cardEl.addClass("native-property-operator-style-019");
-      cardEl.addClass("native-property-operator-style-020");
+      const cardEl = listEl.createDiv({ cls: "npo-property-card" });
 
       const mainRowEl = cardEl.createDiv({ cls: "npo-property-main-row" });
-      mainRowEl.addClass("native-property-operator-style-021");
-      mainRowEl.addClass("native-property-operator-style-022");
-      mainRowEl.addClass("native-property-operator-style-023");
-      mainRowEl.addClass("native-property-operator-style-024");
 
       const reorderHandle = createReorderHandle(mainRowEl, `Reorder property ${property.name}`);
 
       const nameControlEl = mainRowEl.createDiv({ cls: "npo-property-name-control" });
-      nameControlEl.addClass("native-property-operator-style-025");
-      nameControlEl.addClass("native-property-operator-style-026");
-      const nameLabelEl = nameControlEl.createDiv({ text: "Property name" });
-      nameLabelEl.addClass("native-property-operator-style-027");
-      nameLabelEl.addClass("native-property-operator-style-028");
-      nameLabelEl.addClass("native-property-operator-style-029");
-      nameLabelEl.addClass("native-property-operator-style-030");
+      const nameLabelEl = nameControlEl.createEl("label", { text: "Property name" });
       const inputEl = nameControlEl.createEl("input", { type: "text", value: property.name });
       inputEl.addClass("text-input");
-      inputEl.addClass("native-property-operator-style-031");
-      inputEl.addClass("native-property-operator-style-032");
+      inputEl.id = `npo-property-name-${property.id}`;
+      nameLabelEl.htmlFor = inputEl.id;
       inputEl.addEventListener("input", () => {
         nextName = inputEl.value.trim();
       });
 
       const typeControlEl = mainRowEl.createDiv({ cls: "npo-property-type-control" });
-      typeControlEl.addClass("native-property-operator-style-033");
-      typeControlEl.addClass("native-property-operator-style-034");
-      const typeLabelEl = typeControlEl.createDiv({ text: "Type" });
-      typeLabelEl.addClass("native-property-operator-style-035");
-      typeLabelEl.addClass("native-property-operator-style-036");
-      typeLabelEl.addClass("native-property-operator-style-037");
-      typeLabelEl.addClass("native-property-operator-style-038");
+      const typeLabelEl = typeControlEl.createEl("label", { text: "Type" });
       const selectEl = typeControlEl.createEl("select");
       selectEl.addClass("dropdown");
-      selectEl.addClass("native-property-operator-style-039");
-      selectEl.addClass("native-property-operator-style-040");
+      selectEl.id = `npo-property-type-${property.id}`;
+      typeLabelEl.htmlFor = selectEl.id;
       for (const type of Object.values(PROPERTY_TYPES)) {
         selectEl.createEl("option", { text: type, value: type });
       }
@@ -1078,19 +1060,13 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
       });
 
       const actionsEl = cardEl.createDiv({ cls: "npo-property-button-row" });
-      actionsEl.addClass("native-property-operator-style-041");
-      actionsEl.addClass("native-property-operator-style-042");
-      actionsEl.addClass("native-property-operator-style-043");
-      actionsEl.addClass("native-property-operator-style-044");
-      actionsEl.addClass("native-property-operator-style-045");
-      actionsEl.addClass("native-property-operator-style-046");
       const applyButton = actionsEl.createEl("button", { text: "Apply changes..." });
       applyButton.addEventListener("click", () => {
         if (!nextName) {
           new Notice("Property name is required.");
           return;
         }
-        if (this.plugin.settings.properties.some((item) => item.id !== property.id && item.name === nextName)) {
+        if (this.plugin.settings.properties.some((item) => item.id !== property.id && propertyNameKey(item.name) === propertyNameKey(nextName))) {
           new Notice("A catalog property with that name already exists.");
           return;
         }
@@ -1120,6 +1096,11 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
+      actionsEl.createSpan({
+        cls: "npo-property-usage",
+        text: `Used in ${usage.get(property.name) || 0} files`,
+        attr: { title: "Usage across all Markdown notes in this vault" }
+      });
       reorderItems.push({ itemEl: cardEl, handleEl: reorderHandle, id: property.id });
     }
 
@@ -1146,14 +1127,14 @@ class NativePropertyOperatorSettingTab extends PluginSettingTab {
         }).open();
       });
     }).addButton((button) => {
-      button.setButtonText("Add existing property").onClick(() => {
-        const detected = this.plugin.scanDetectedProperties();
+      button.setButtonText("Add existing property").onClick(async () => {
+        const detected = filterExistingPropertyCandidates(await this.plugin.getExistingProperties(), "", this.plugin.settings.properties.map((property) => property.name));
         if (detected.length === 0) {
-          new Notice("No uncataloged properties detected in visible Markdown notes.");
+          new Notice("No uncataloged properties found in this vault or its native property registry.");
           return;
         }
         new ExistingPropertyBrowserModal(this.app, detected, this.plugin.settings.properties.map((property) => property.name), async (item) => {
-          if (this.plugin.settings.properties.some((property) => property.name === item.name)) {
+          if (this.plugin.settings.properties.some((property) => propertyNameKey(property.name) === propertyNameKey(item.name))) {
             new Notice("Property is already in the catalog.");
             return;
           }
@@ -1508,37 +1489,79 @@ class PropertyEditorModal extends Modal {
     this.onSave = onSave;
   }
 
-  onOpen() {
+  async onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.property.name ? "Edit property" : "Add property" });
-
-    new Setting(contentEl)
-      .setName("Property name")
-      .addText((text) => text.setValue(this.property.name).onChange((value) => {
-        this.property.name = value.trim();
-      }));
-
-    new Setting(contentEl)
+    this.modalEl.addClass("npo-property-editor-modal");
+    contentEl.createEl("h2", { text: "Add property" });
+    const existing = await this.plugin.getExistingProperties();
+    if (!this.contentEl.isConnected) return;
+    let typeDropdown;
+    let saveButton;
+    let saving = false;
+    const feedback = contentEl.createEl("p", { cls: "setting-item-description" });
+    const duplicate = () => this.plugin.settings.properties.some((item) =>
+      item.id !== this.property.id && propertyNameKey(item.name) === propertyNameKey(this.property.name));
+    const updateName = (value) => {
+      this.property.name = value.trim();
+      const detected = existing.find((item) => propertyNameKey(item.name) === propertyNameKey(this.property.name));
+      if (detected) {
+        this.property.name = detected.name;
+        this.property.type = detected.inferredType;
+        typeDropdown?.setValue(this.property.type);
+      }
+      feedback.setText(duplicate() ? "Already in the property catalog. Choose another property."
+        : detected ? propertyCandidateNote({ type: detected.inferredType, detectedCount: detected.count })
+          : this.property.name ? "New property · used in 0 files. Adding it only creates a catalog definition."
+            : "Choose an existing vault property or enter a new name.");
+      saveButton?.setDisabled(saving || !this.property.name || duplicate());
+    };
+    const typeSetting = new Setting(contentEl)
       .setName("Native Obsidian property type")
       .addDropdown((dropdown) => {
+        typeDropdown = dropdown;
         for (const type of Object.values(PROPERTY_TYPES)) dropdown.addOption(type, type);
         dropdown.setValue(this.property.type).onChange((value) => {
           this.property.type = value;
         });
       });
-
+    typeSetting.settingEl.addClass("npo-property-editor-field");
+    const nameSetting = new Setting(contentEl)
+      .setName("Property name")
+      .addText((text) => {
+        text.setValue(this.property.name).onChange(updateName);
+        new PropertyInputSuggest(text.inputEl, () => filterExistingPropertyCandidates(existing, "", this.plugin.settings.properties.map((item) => item.name))
+          .map((item) => ({ name: item.name, type: item.inferredType, configured: false, detectedCount: item.count })), (item) => {
+          text.setValue(item.name);
+          updateName(item.name);
+        });
+      });
+    nameSetting.settingEl.addClass("npo-property-editor-field");
+    contentEl.appendChild(feedback);
     new Setting(contentEl)
       .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
-      .addButton((button) => button.setButtonText("Save").setCta().onClick(async () => {
-        if (!this.property.name) {
-          new Notice("Property name is required.");
-          return;
-        }
-        await this.onSave(normalizeProperty(this.property));
-        this.close();
-      }));
+      .addButton((button) => {
+        saveButton = button;
+        button.setButtonText("Add to catalog").setCta().onClick(async () => {
+          if (saving) return;
+          if (!this.property.name || duplicate()) {
+            updateName(this.property.name);
+            return;
+          }
+          saving = true;
+          button.setDisabled(true);
+          try {
+            await this.onSave(normalizeProperty(this.property));
+            this.close();
+          } finally {
+            saving = false;
+            button.setDisabled(!this.property.name || duplicate());
+          }
+        });
+      });
+    updateName(this.property.name);
   }
+
 }
 
 class PropertyCatalogApplyModal extends Modal {
@@ -1819,14 +1842,8 @@ class ExistingPropertyBrowserModal extends Modal {
       rowEl.createDiv({ cls: "npo-existing-property-result-title", text: item.name });
       rowEl.createDiv({
         cls: "npo-existing-property-result-meta",
-        text: `${item.inferredType} · appears in ${item.count} file${item.count === 1 ? "" : "s"}`
+        text: propertyCandidateNote({ type: item.inferredType, detectedCount: item.count })
       });
-      if (item.examples && item.examples.length > 0) {
-        rowEl.createDiv({
-          cls: "npo-existing-property-result-examples",
-          text: `Examples: ${item.examples.join(", ")}`
-        });
-      }
       rowEl.toggleClass("npo-existing-property-result-selected", index === this.selectedIndex);
       rowEl.addEventListener("click", () => this.chooseSelected(index));
     }
@@ -1884,6 +1901,8 @@ class ActionEditorModal extends Modal {
     this.kind = kind;
     this.context = context;
     this.pendingOperationFocusIndex = null;
+    this.preferredAnchoredModalTop = null;
+    this.handleWindowResize = () => this.updateAnchoredModalTop();
     this.action = normalizeAction(action || createEmptyAction(kind));
     this.plugin.canonicalizeActionFolderPaths(this.action);
     if (!action && this.action.operation === ACTIONS.ADD) {
@@ -1898,7 +1917,16 @@ class ActionEditorModal extends Modal {
   }
 
   onOpen() {
+    this.modalEl.addClass("npo-action-editor-modal");
+    getOwnerWindow(this.contentEl)?.addEventListener("resize", this.handleWindowResize);
     this.render();
+  }
+
+  onClose() {
+    getOwnerWindow(this.contentEl)?.removeEventListener("resize", this.handleWindowResize);
+    this.preferredAnchoredModalTop = null;
+    this.modalEl.removeClass("npo-action-editor-top-anchored");
+    this.modalEl.style.removeProperty("--npo-action-editor-top");
   }
 
   render(options = {}) {
@@ -2210,20 +2238,41 @@ class ActionEditorModal extends Modal {
     const targetSetting = new Setting(contentEl).setName("Target");
     targetSetting.settingEl.addClass("npo-target-selector");
     targetSetting.controlEl.addClass("npo-target-selector-control");
+    const targetDetailsEl = contentEl.createDiv({ cls: "npo-manual-target-details" });
     targetSetting.addDropdown((dropdown) => {
-        dropdown
-          .addOption(TARGETS.CURRENT_FILE, TARGET_LABELS[TARGETS.CURRENT_FILE])
-          .addOption(TARGETS.CURRENT_FOLDER, TARGET_LABELS[TARGETS.CURRENT_FOLDER])
-          .addOption(TARGETS.SPECIFIC_TARGETS, TARGET_LABELS[TARGETS.SPECIFIC_TARGETS])
-          .setValue(this.action.targetType)
-          .onChange((value) => {
-            this.action.targetType = value;
-            if (value === TARGETS.SPECIFIC_TARGETS && !this.action.targets) this.action.targets = [];
-            this.rerenderPreservingScroll();
-          });
+        for (const option of MANUAL_TARGET_OPTIONS) dropdown.addOption(option.value, option.label);
+        dropdown.setValue(this.action.targetType).onChange((value) => {
+          const modalTop = this.modalEl.getBoundingClientRect().top;
+          const scrollEl = getModalScrollContainer(this.contentEl);
+          const scrollTop = Number(scrollEl?.scrollTop) || 0;
+          this.action.targetType = value;
+          if (value === TARGETS.SPECIFIC_TARGETS && !this.action.targets) this.action.targets = [];
+          this.renderManualTargetDetails(targetDetailsEl);
+          this.anchorModalTop(modalTop);
+          if (scrollEl) scrollEl.scrollTop = scrollTop;
+        });
       });
 
-    if (this.action.targetType === TARGETS.SPECIFIC_TARGETS) this.addSpecificTargetsSetting(contentEl);
+    this.renderManualTargetDetails(targetDetailsEl);
+  }
+
+  renderManualTargetDetails(targetDetailsEl) {
+    targetDetailsEl.empty();
+    if (this.action.targetType === TARGETS.SPECIFIC_TARGETS) this.addSpecificTargetsSetting(targetDetailsEl);
+  }
+
+  anchorModalTop(top) {
+    if (this.preferredAnchoredModalTop == null) this.preferredAnchoredModalTop = Math.max(0, top);
+    this.modalEl.addClass("npo-action-editor-top-anchored");
+    this.updateAnchoredModalTop();
+  }
+
+  updateAnchoredModalTop() {
+    if (this.preferredAnchoredModalTop == null) return;
+    const ownerWindow = getOwnerWindow(this.contentEl);
+    const viewportHeight = ownerWindow?.innerHeight || this.preferredAnchoredModalTop;
+    const top = Math.min(this.preferredAnchoredModalTop, Math.max(0, viewportHeight - 96));
+    this.modalEl.style.setProperty("--npo-action-editor-top", `${top}px`);
   }
 
   addAutoTargetsSetting(contentEl) {
@@ -2584,17 +2633,24 @@ class InlineSuggestInput {
     this.getNote = getNote;
     this.maxDropdownHeight = options.maxDropdownHeight || 300;
     this.minimumDropdownHeight = options.minimumDropdownHeight || 120;
+    this.downwardPropertyPopup = Boolean(options.downwardPropertyPopup);
     this.suggestions = [];
     this.selectedIndex = 0;
     this.ownerWindow = getOwnerWindow(inputEl);
     this.containerEl = inputEl.parentElement;
     this.dropdownEl = this.containerEl.createDiv({ cls: "npo-inline-suggest npo-inline-suggest-list" });
 
+    this.handlePopupLayout = (event) => {
+      if (event?.type === "scroll" && this.dropdownEl.contains(event.target)) return;
+      this.fitDropdownToInput();
+    };
     this.inputEl.addEventListener("input", () => this.render());
     this.inputEl.addEventListener("focus", () => this.render());
     this.inputEl.addEventListener("keydown", (event) => this.handleKeydown(event));
     this.inputEl.addEventListener("blur", () => {
-      this.ownerWindow.setTimeout(() => this.close(), 150);
+      this.ownerWindow.setTimeout(() => {
+        if (this.inputEl.ownerDocument.activeElement !== this.inputEl) this.close();
+      }, 150);
     });
   }
 
@@ -2611,8 +2667,14 @@ class InlineSuggestInput {
       return;
     }
 
-    this.fitDropdownToInput();
+    if (this.downwardPropertyPopup) {
+      // A window-level overlay avoids clipping by modal scroll containers.
+      this.inputEl.ownerDocument.body.appendChild(this.dropdownEl);
+      this.dropdownEl.addClass("npo-property-suggest-overlay");
+      this.watchPopupLayout();
+    }
     this.dropdownEl.addClass("npo-inline-suggest-visible");
+    this.fitDropdownToInput();
     for (const [index, item] of this.suggestions.entries()) {
       const itemEl = this.dropdownEl.createEl("button", { cls: "npo-inline-suggest-item", type: "button" });
       itemEl.toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
@@ -2659,7 +2721,14 @@ class InlineSuggestInput {
       items[index].toggleClass("npo-inline-suggest-item-selected", index === this.selectedIndex);
     }
     const selectedEl = items[this.selectedIndex];
-    if (selectedEl && typeof selectedEl.scrollIntoView === "function") {
+    if (selectedEl && this.downwardPropertyPopup) {
+      const top = selectedEl.offsetTop;
+      const bottom = top + selectedEl.offsetHeight;
+      if (top < this.dropdownEl.scrollTop) this.dropdownEl.scrollTop = top;
+      else if (bottom > this.dropdownEl.scrollTop + this.dropdownEl.clientHeight) {
+        this.dropdownEl.scrollTop = bottom - this.dropdownEl.clientHeight;
+      }
+    } else if (selectedEl && typeof selectedEl.scrollIntoView === "function") {
       selectedEl.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }
@@ -2670,7 +2739,29 @@ class InlineSuggestInput {
     this.onChoose(item);
   }
 
+  watchPopupLayout() {
+    if (this.popupObserver) return;
+    this.ownerWindow.addEventListener("resize", this.handlePopupLayout);
+    this.inputEl.ownerDocument.addEventListener("scroll", this.handlePopupLayout, true);
+    this.popupObserver = new this.ownerWindow.MutationObserver(() => {
+      if (!this.inputEl.isConnected) this.close();
+    });
+    this.popupObserver.observe(this.inputEl.ownerDocument.body, { childList: true, subtree: true });
+    this.popupResizeObserver = new this.ownerWindow.ResizeObserver(() => this.fitDropdownToInput());
+    this.popupResizeObserver.observe(this.inputEl.ownerDocument.documentElement);
+    this.popupResizeObserver.observe(this.inputEl);
+  }
+
   close() {
+    if (this.downwardPropertyPopup) {
+      this.ownerWindow.removeEventListener("resize", this.handlePopupLayout);
+      this.inputEl.ownerDocument.removeEventListener("scroll", this.handlePopupLayout, true);
+      this.popupObserver?.disconnect();
+      this.popupResizeObserver?.disconnect();
+      this.popupObserver = null;
+      this.popupResizeObserver = null;
+      this.dropdownEl.remove();
+    }
     this.dropdownEl.removeClass("npo-inline-suggest-visible");
     this.dropdownEl.empty();
     this.suggestions = [];
@@ -2679,6 +2770,23 @@ class InlineSuggestInput {
 
   fitDropdownToInput() {
     const inputRect = this.inputEl.getBoundingClientRect();
+    if (this.downwardPropertyPopup) {
+      const viewportWidth = this.ownerWindow.innerWidth;
+      const viewportHeight = this.ownerWindow.innerHeight;
+      const scrollBounds = this.inputEl.closest(".modal-content")?.getBoundingClientRect();
+      if (!this.inputEl.isConnected || inputRect.bottom > viewportHeight || inputRect.top < 0
+        || (scrollBounds && (inputRect.top < scrollBounds.top || inputRect.bottom > scrollBounds.bottom))) {
+        this.close();
+        return;
+      }
+      const geometry = calculateDownwardPropertySuggestGeometry(inputRect, viewportWidth, viewportHeight, this.maxDropdownHeight);
+      this.dropdownEl.removeClass("npo-inline-suggest-opens-up", "npo-inline-suggest-opens-down");
+      this.dropdownEl.setCssStyles({
+        left: `${geometry.left}px`, top: `${geometry.top}px`,
+        width: `${geometry.width}px`, maxHeight: `${geometry.maxHeight}px`
+      });
+      return;
+    }
     const containerRect = this.containerEl.getBoundingClientRect();
     const modalEl = this.inputEl.closest(".modal-content") || this.inputEl.closest(".modal");
     const modalRect = modalEl ? modalEl.getBoundingClientRect() : {
@@ -2731,7 +2839,7 @@ class PropertyInputSuggest extends InlineSuggestInput {
       (candidate) => candidate.name,
       onChoose,
       (candidate) => propertyCandidateNote(candidate),
-      { maxDropdownHeight: 320, minimumDropdownHeight: 260 }
+      { maxDropdownHeight: 480, downwardPropertyPopup: true }
     );
   }
 }
@@ -2749,6 +2857,11 @@ class PropertySuggestModal extends FuzzySuggestModal {
 
   getItemText(item) {
     return formatCandidate(item);
+  }
+
+  renderSuggestion(match, el) {
+    el.createDiv({ cls: "npo-existing-property-result-title", text: match.item.name });
+    el.createDiv({ cls: "npo-existing-property-result-meta", text: propertyCandidateNote(match.item) });
   }
 
   onChooseItem(item) {
@@ -2896,7 +3009,7 @@ function createEmptyAction(kind) {
     enabled: kind === "auto" ? false : undefined,
     trigger: kind === "auto" ? AUTO_TRIGGER : undefined,
     operation: ACTIONS.ADD,
-    targetType: kind === "auto" ? TARGETS.FOLDER : TARGETS.CURRENT_FILE,
+    targetType: kind === "auto" ? TARGETS.FOLDER : TARGETS.SPECIFIC_TARGETS,
     targetFolder: "/",
     targetPath: "",
     targets: [],
@@ -3428,15 +3541,25 @@ function displayFolderPath(path) {
   return normalizeFolderPath(path) === "/" ? "Vault root (/)" : normalizeFolderPath(path);
 }
 
+function propertyNameKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function propertyTypeFromNativeType(type) {
+  return ({ text: PROPERTY_TYPES.TEXT, multitext: PROPERTY_TYPES.LIST, number: PROPERTY_TYPES.NUMBER,
+    checkbox: PROPERTY_TYPES.CHECKBOX, date: PROPERTY_TYPES.DATE, datetime: PROPERTY_TYPES.DATETIME,
+    tags: PROPERTY_TYPES.TAGS })[type] || PROPERTY_TYPES.TEXT;
+}
+
 function formatCandidate(candidate) {
   return `${candidate.name} - ${propertyCandidateNote(candidate)}`;
 }
 
 function filterExistingPropertyCandidates(candidates, query = "", catalogNames = []) {
-  const catalog = new Set((catalogNames || []).map((name) => String(name || "")));
+  const catalog = new Set((catalogNames || []).map(propertyNameKey));
   const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
   return (candidates || [])
-    .filter((candidate) => candidate && candidate.name && !catalog.has(candidate.name))
+    .filter((candidate) => candidate && candidate.name && !catalog.has(propertyNameKey(candidate.name)))
     .filter((candidate) => {
       if (!normalizedQuery) return true;
       return formatExistingPropertyCandidate(candidate).toLocaleLowerCase().includes(normalizedQuery);
@@ -3447,17 +3570,11 @@ function filterExistingPropertyCandidates(candidates, query = "", catalogNames =
 
 function formatExistingPropertyCandidate(candidate) {
   const examples = candidate.examples && candidate.examples.length > 0 ? ` — examples: ${candidate.examples.join(", ")}` : "";
-  return `${candidate.name} — ${candidate.inferredType} — appears in ${candidate.count} file(s)${examples}`;
+  return `${candidate.name} — ${propertyCandidateNote({ type: candidate.inferredType, detectedCount: candidate.count })}${examples}`;
 }
 
 function propertyCandidateNote(candidate) {
-  const source = candidate.configured && candidate.detectedCount > 0
-    ? "configured + detected"
-    : candidate.configured
-      ? "configured"
-      : "detected";
-  const count = candidate.detectedCount > 0 ? `, appears in ${candidate.detectedCount} file(s)` : "";
-  return `${candidate.type} - ${source}${count}`;
+  return `${candidate.type} – appears in ${candidate.detectedCount || 0} file(s)`;
 }
 
 function evaluateCatalogChange(frontmatter, change) {
@@ -3866,6 +3983,18 @@ function calculateInlineSuggestHorizontalGeometry(inputRect, containerRect, moda
   return { left: popupLeft - containerLeft, width: popupWidth };
 }
 
+function calculateDownwardPropertySuggestGeometry(inputRect, viewportWidth, viewportHeight, preferredMaximum = 480) {
+  const margin = 12;
+  const top = Math.min(viewportHeight, Math.max(0, inputRect.bottom + 4));
+  const left = Math.min(Math.max(margin, inputRect.left), Math.max(margin, viewportWidth - margin));
+  return {
+    top,
+    left,
+    width: Math.max(0, Math.min(inputRect.width, viewportWidth - left - margin)),
+    maxHeight: Math.floor(Math.max(0, Math.min(preferredMaximum, viewportHeight - top - margin)))
+  };
+}
+
 function calculateInlineSuggestVerticalGeometry(inputRect, modalRect, viewportHeight, preferredMaximum, minimumHeight) {
   const viewportBottom = Math.max(0, Number(viewportHeight) || 0);
   const boundaryTop = Math.max(0, Number.isFinite(modalRect && modalRect.top) ? modalRect.top : 0);
@@ -3958,6 +4087,7 @@ function createId() {
 
 export {
   ACTIONS,
+  MANUAL_TARGET_OPTIONS,
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
@@ -3965,6 +4095,7 @@ export {
   buildOperationEditorModel,
   canonicalFolderPath,
   canonicalizeTargetsWithPath,
+  calculateDownwardPropertySuggestGeometry,
   calculateInlineSuggestHorizontalGeometry,
   calculateInlineSuggestVerticalGeometry,
   captureModalScrollState,

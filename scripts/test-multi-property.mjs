@@ -42,15 +42,18 @@ const pluginModule = require("../main.js");
 Module._load = originalLoad;
 const {
   ACTIONS,
+  MANUAL_TARGET_OPTIONS,
   PROPERTY_TYPES,
   TARGETS,
   applyOperations,
   buildActionPreviewState,
   buildOperationEditorModel,
+  calculateDownwardPropertySuggestGeometry,
   calculateInlineSuggestHorizontalGeometry,
   calculateInlineSuggestVerticalGeometry,
   captureModalScrollState,
   convertOperationsForOperation,
+  createEmptyAction,
   emptyResult,
   evaluateOperations,
   filterExistingPropertyCandidates,
@@ -67,6 +70,15 @@ const {
   targetMatchesPath,
   validateAction
 } = pluginModule;
+
+assert.deepEqual(MANUAL_TARGET_OPTIONS, [
+  { value: TARGETS.SPECIFIC_TARGETS, label: "Specific targets" },
+  { value: TARGETS.CURRENT_FOLDER, label: "Current folder" },
+  { value: TARGETS.CURRENT_FILE, label: "Current file" }
+], "manual target options have the required display order and explicit persisted values");
+assert.equal(createEmptyAction("manual").targetType, TARGETS.SPECIFIC_TARGETS, "new manual actions default to Specific targets");
+assert.equal(normalizeAction({ targetType: TARGETS.CURRENT_FILE }, "manual").targetType, TARGETS.CURRENT_FILE, "existing Current file actions retain their saved target");
+assert.equal(normalizeAction({ targetType: TARGETS.CURRENT_FOLDER }, "manual").targetType, TARGETS.CURRENT_FOLDER, "existing Current folder actions retain their saved target");
 
 const legacy = normalizeSettings({
   manualActions: [{
@@ -629,6 +641,15 @@ const upwardPopup = calculateInlineSuggestVerticalGeometry(
   120
 );
 assert.deepEqual(upwardPopup, { opensUp: true, maxHeight: 440 }, "popup opens upward and remains viewport-capped when space below is insufficient");
+const propertyPopup = calculateDownwardPropertySuggestGeometry({ left: 300, bottom: 200, width: 440 }, 900, 700);
+assert.deepEqual(propertyPopup, { left: 300, top: 204, width: 440, maxHeight: 480 }, "property picker keeps input width and uses its expanded height below the input");
+const constrainedPropertyPopup = calculateDownwardPropertySuggestGeometry({ left: 300, bottom: 600, width: 440 }, 900, 700);
+assert.equal(constrainedPropertyPopup.top, 604, "property picker never flips upward when space is constrained");
+assert.equal(constrainedPropertyPopup.maxHeight, 84, "property picker stops before the window boundary");
+const narrowPropertyPopup = calculateDownwardPropertySuggestGeometry({ left: 200, bottom: 300, width: 440 }, 400, 400);
+assert.equal(narrowPropertyPopup.width, 188, "property picker fits narrow window boundaries");
+assert.equal(calculateDownwardPropertySuggestGeometry({ left: 20, bottom: 900, width: 200 }, 400, 400).maxHeight, 0, "off-screen input never produces overflowing menu height");
+
 const manyInlineCandidates = Array.from({ length: 120 }, (_, index) => ({ name: `Property ${String(index).padStart(3, "0")}` }));
 assert.equal(filterInlineSuggestItems(manyInlineCandidates, (item) => item.name, "").length, 120, "at least 100 inline candidates remain available without compact truncation");
 assert.deepEqual(

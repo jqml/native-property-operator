@@ -103,7 +103,51 @@ npm run build
 
 The production build writes `main.js`.
 
+### Local development vault
+
+The source of truth is `~/Projects/obsidian-plugins/native-property-operator`.
+The normal local target is **Obsidian Pro**, at
+`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Pro`.
+Obsidian A has an independent older installation and separate settings; it is not synchronized.
+
+Run `npm run dev` for continuous builds, or `npm run deploy:pro` to run the checks,
+build, back up the installed plugin under `~/Backups/obsidian-plugins`, and copy
+only `main.js`, `manifest.json`, and `styles.css` to Pro. The deployment preserves
+`data.json`, native property types, notes, and all other plugins.
+Then run `obsidian vault="Obsidian Pro" plugin:reload id=native-property-operator`.
+There is no symlink or automatic deployment from the build watcher.
+
+The Properties page displays usage across all Markdown notes in the vault,
+including folders excluded from actions. Empty values count as usage; unused
+catalog and native-registry properties show zero. Add property offers existing
+names, selects their detected type, and prevents duplicate catalog entries,
+including case variants. Adding a catalog definition does not modify notes.
+
+Property cards use two compact rows: labeled name/type controls with a drag handle,
+then Apply changes, Revert, Delete from catalog, and a muted usage count on the right.
+The action row wraps on narrow windows. Add property places Type before Property
+name and opens higher in Settings. Property suggestions use matching input/menu
+widths and two-line options: the name followed by `Type – appears in N file(s)`.
+The scrollable menu always opens downward, expands up to 480 px when space permits,
+and adapts to the input's owning window during resizing and scrolling. Manual
+action property inputs use the same suggestion behavior.
+
+New manual actions default to Specific targets. Existing saved targets retain their
+values, and changing the target selector updates its dependent controls without
+moving the editor or resetting its scroll position.
+
 ### Manual runtime smoke checklist
+
+Settings layout and property catalog:
+
+- In normal and narrow Settings windows, confirm each property card aligns its name/type controls and keeps usage beside the action buttons, wrapping without horizontal overflow.
+- Confirm unused properties display zero; empty values and unchecked checkboxes still count as usage, including notes in folders excluded from actions.
+- Edit a card's name/type and use Revert; confirm the saved values return without modifying notes.
+- Open Add property; confirm Type precedes Property name and both controls have matching widths.
+- Browse existing properties, including native-registry properties with zero usage. Confirm their type is selected and case variants of catalog names cannot be added again.
+- Focus Property name in Add property and a manual action. Confirm suggestions open only downward, use the simplified two-line wording, and scroll internally with mouse and keyboard.
+- Resize Settings with suggestions open; confirm menu width follows the input and its bottom stays within the window. Close the dialog and confirm no suggestion overlay remains.
+
 
 Targets:
 
